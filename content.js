@@ -167,6 +167,9 @@
       onApplyAll: (correctedBody) => {
         TextReplacer.replaceEntireBody(composeBody, correctedBody);
       },
+      onApplySelected: (selectedIssues) => {
+        TextReplacer.applyAllCorrections(composeBody, selectedIssues);
+      },
       onRetry: () => startReview(composeContainer),
     };
 

@@ -166,7 +166,7 @@ async function handleReview(port, emailBody, { recipients, quotedContext } = {})
     systemInstruction: { parts: [{ text: systemPrompt }] },
     generationConfig: {
       responseMimeType: 'application/json',
-      temperature: 0.2,
+      temperature: 0.1,
     },
   };
 

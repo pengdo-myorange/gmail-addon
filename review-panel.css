@@ -169,6 +169,37 @@
   margin-bottom: 8px;
 }
 
+/* --- 변경 사항 헤더 (전체 선택) --- */
+.changes-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.changes-summary-header .section-label {
+  margin-bottom: 0;
+}
+
+.select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #5f6368;
+  cursor: pointer;
+  user-select: none;
+}
+
+.change-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: #FF6B2C;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
+}
+
 .changes-list {
   list-style: none;
   margin: 0;
@@ -189,6 +220,10 @@
   border-radius: 8px;
   border: 1px solid #f1f3f4;
   animation: changeItemIn 150ms ease-out;
+}
+
+.change-item .change-checkbox {
+  margin-top: 2px;
 }
 
 @keyframes changeItemIn {

@@ -142,6 +142,7 @@ const ReviewPanel = (() => {
     if (!state?.container) return;
     state.correctedBody = correctedBody;
     state.issues = issues || [];
+    state.issueChecked = new Array(state.issues.length).fill(true);
     state.container.innerHTML = '';
 
     if (totalIssues === 0 || state.issues.length === 0) {
@@ -179,16 +180,40 @@ const ReviewPanel = (() => {
     const summarySection = document.createElement('div');
     summarySection.className = 'changes-summary-section';
 
+    const summaryHeader = document.createElement('div');
+    summaryHeader.className = 'changes-summary-header';
+
     const summaryLabel = document.createElement('div');
     summaryLabel.className = 'section-label';
     summaryLabel.textContent = `변경 사항 (${issues.length}건)`;
-    summarySection.appendChild(summaryLabel);
+    summaryHeader.appendChild(summaryLabel);
+
+    const selectAllLabel = document.createElement('label');
+    selectAllLabel.className = 'select-all-label';
+    const selectAllCb = document.createElement('input');
+    selectAllCb.type = 'checkbox';
+    selectAllCb.checked = true;
+    selectAllCb.className = 'change-checkbox';
+    selectAllCb.addEventListener('change', () => {
+      const checked = selectAllCb.checked;
+      state.issueChecked = state.issueChecked.map(() => checked);
+      const cbs = changesList.querySelectorAll('.change-checkbox');
+      cbs.forEach(cb => { cb.checked = checked; });
+      _updateSelectionUI(state);
+    });
+    const selectAllText = document.createElement('span');
+    selectAllText.textContent = '전체 선택';
+    selectAllLabel.appendChild(selectAllCb);
+    selectAllLabel.appendChild(selectAllText);
+    summaryHeader.appendChild(selectAllLabel);
+
+    summarySection.appendChild(summaryHeader);
 
     const changesList = document.createElement('ul');
     changesList.className = 'changes-list';
 
-    for (const issue of issues) {
-      const item = _buildChangeItem(issue);
+    for (let i = 0; i < issues.length; i++) {
+      const item = _buildChangeItem(issues[i], i, state, selectAllCb);
       changesList.appendChild(item);
     }
 
@@ -334,9 +359,22 @@ const ReviewPanel = (() => {
     return header;
   }
 
-  function _buildChangeItem(issue) {
+  function _buildChangeItem(issue, index, state, selectAllCb) {
     const item = document.createElement('li');
     item.className = 'change-item';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = true;
+    cb.className = 'change-checkbox';
+    cb.addEventListener('change', () => {
+      state.issueChecked[index] = cb.checked;
+      if (selectAllCb) {
+        selectAllCb.checked = state.issueChecked.every(Boolean);
+      }
+      _updateSelectionUI(state);
+    });
+    item.appendChild(cb);
 
     const categoryInfo = EmailReviewPrompts ? EmailReviewPrompts.getCategoryInfo(issue.category) : null;
     const catName = CATEGORY_NAMES[issue.category] || issue.category;
@@ -369,6 +407,25 @@ const ReviewPanel = (() => {
     return item;
   }
 
+  function _updateSelectionUI(state) {
+    const selectedCount = state.issueChecked.filter(Boolean).length;
+    const applyBtn = state.container.querySelector('.btn-apply-all');
+    const statusEl = state.container.querySelector('.footer-status');
+    if (applyBtn) {
+      applyBtn.textContent = `반영하기 (${selectedCount}건 수정)`;
+      applyBtn.disabled = selectedCount === 0;
+    }
+    if (statusEl) {
+      statusEl.textContent = `${selectedCount}/${state.issues.length}건 선택`;
+    }
+
+    const correctedCard = state.container.querySelector('.corrected-body-card');
+    if (correctedCard && state.correctedBody) {
+      const selectedIssues = state.issues.filter((_, i) => state.issueChecked[i]);
+      correctedCard.innerHTML = _highlightCorrections(state.correctedBody, selectedIssues);
+    }
+  }
+
   function _buildFooter(state, totalIssues) {
     const footer = document.createElement('div');
     footer.className = 'modal-footer';
@@ -380,12 +437,19 @@ const ReviewPanel = (() => {
     applyBtn.className = 'btn-apply-all';
     applyBtn.textContent = `반영하기 (${totalIssues}건 수정)`;
     applyBtn.addEventListener('click', () => {
-      if (state.callbacks && state.callbacks.onApplyAll && state.correctedBody) {
+      const selectedIssues = state.issues.filter((_, i) => state.issueChecked[i]);
+      if (selectedIssues.length === 0) { destroy(state); return; }
+
+      const allSelected = state.issueChecked.every(Boolean);
+      if (allSelected && state.callbacks?.onApplyAll && state.correctedBody) {
         state.callbacks.onApplyAll(state.correctedBody);
+      } else if (state.callbacks?.onApplySelected) {
+        state.callbacks.onApplySelected(selectedIssues);
       }
+
       if (_isContextValid()) {
         try {
-          for (const issue of state.issues) {
+          for (const issue of selectedIssues) {
             chrome.runtime.sendMessage({
               type: 'logUsageEvent',
               event: { event_type: 'issue_applied', category: issue.category },
@@ -410,7 +474,7 @@ const ReviewPanel = (() => {
 
     const status = document.createElement('span');
     status.className = 'footer-status';
-    status.textContent = `${totalIssues}건 수정`;
+    status.textContent = `${totalIssues}/${state.issues.length}건 선택`;
     footer.appendChild(status);
 
     return footer;

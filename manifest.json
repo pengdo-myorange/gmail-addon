@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "보내기 전에",
-  "description": "Gmail 발송 전 한국어 비즈니스 이메일의 오류를 잡아내고 수정합니다.",
+  "description": "Gmail 발송 전 한국어 비즈니스 이메일의 오류를 잡아내고 수정하는 크롬 확장 프로그램",
   "version": "1.1.1",
   "permissions": [
     "activeTab",

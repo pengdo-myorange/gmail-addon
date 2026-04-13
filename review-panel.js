@@ -9,7 +9,7 @@ const ReviewPanel = (() => {
 
   function _isContextValid() {
     try {
-      return !!chrome.runtime?.id;
+      return typeof chrome !== 'undefined' && !!chrome.runtime && !!chrome.runtime.id;
     } catch (e) {
       return false;
     }

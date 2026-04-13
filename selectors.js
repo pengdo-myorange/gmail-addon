@@ -98,6 +98,63 @@ const GmailSelectors = (() => {
     return composeContainer.querySelector('div[contenteditable="true"]');
   }
 
+  const RECIPIENT_FIELD_SELECTORS = {
+    to: [
+      'input[name="to"]',
+      'div[name="to"]',
+      'input[aria-label*="받는"]',
+      'input[aria-label*="To"]',
+    ],
+    cc: [
+      'input[name="cc"]',
+      'div[name="cc"]',
+      'input[aria-label*="참조"]',
+      'input[aria-label*="Cc"]',
+    ],
+    bcc: [
+      'input[name="bcc"]',
+      'div[name="bcc"]',
+      'input[aria-label*="숨은"]',
+      'input[aria-label*="Bcc"]',
+    ],
+  };
+
+  function findRecipients(composeContainer) {
+    if (!composeContainer) return [];
+    const recipients = [];
+
+    for (const [type, selectors] of Object.entries(RECIPIENT_FIELD_SELECTORS)) {
+      for (const sel of selectors) {
+        const field = composeContainer.querySelector(sel);
+        if (!field) continue;
+
+        const row = field.closest('tr') || field.closest('div[role="list"]') || field.parentElement;
+        if (!row) continue;
+
+        const chips = row.querySelectorAll('span[email]');
+        for (const chip of chips) {
+          const email = chip.getAttribute('email');
+          if (!email) continue;
+          const name = (chip.getAttribute('name') || chip.textContent || '').trim();
+          recipients.push({ name, email, type });
+        }
+        if (chips.length > 0) break;
+      }
+    }
+
+    if (recipients.length === 0) {
+      const allChips = composeContainer.querySelectorAll('span[email]');
+      for (const chip of allChips) {
+        const email = chip.getAttribute('email');
+        if (!email) continue;
+        const name = (chip.getAttribute('name') || chip.textContent || '').trim();
+        recipients.push({ name, email, type: 'to' });
+      }
+    }
+
+    return recipients;
+  }
+
   function findSendButtonToolbar(sendButton) {
     if (!sendButton) return null;
     return sendButton.closest('td') || sendButton.closest('tr') || sendButton.parentElement;
@@ -144,6 +201,7 @@ const GmailSelectors = (() => {
     findComposeContainer,
     findComposeBody,
     findSendButton,
+    findRecipients,
     findSendButtonToolbar,
     selfTest,
     runSelfTestWithRetry,

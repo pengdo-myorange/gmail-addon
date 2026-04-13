@@ -452,3 +452,67 @@ h1 {
   border-radius: 4px;
   background: #FF6B2C;
 }
+
+/* --- 데이터 및 개인정보 --- */
+
+.privacy-section h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #202124;
+  margin: 0 0 8px 0;
+}
+
+.privacy-group {
+  margin-bottom: 20px;
+}
+
+.privacy-group:last-of-type {
+  margin-bottom: 12px;
+}
+
+.privacy-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.privacy-table th {
+  text-align: left;
+  font-weight: 500;
+  color: #5f6368;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e0e0e0;
+  background: #fafafa;
+}
+
+.privacy-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #f0f0f0;
+  color: #202124;
+  vertical-align: top;
+}
+
+.privacy-table tr:last-child td {
+  border-bottom: none;
+}
+
+.privacy-notes {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+  font-size: 13px;
+  color: #5f6368;
+}
+
+.privacy-notes li {
+  padding: 3px 0 3px 16px;
+  position: relative;
+}
+
+.privacy-notes li::before {
+  content: '·';
+  position: absolute;
+  left: 4px;
+  color: #9aa0a6;
+}

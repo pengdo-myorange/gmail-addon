@@ -22,7 +22,7 @@ const EmailReviewPrompts = (() => {
   const CATEGORY_MAP = Object.fromEntries(CATEGORIES.map(c => [c.id, c]));
 
   const CATEGORY_DESCRIPTIONS = {
-    recipient_title: '수신자 호칭 오류: 받는 사람 이름/직책 잘못 표기',
+    recipient_title: '수신자 호칭 오류: 받는 사람 이름/직책 잘못 표기. 수신자 정보나 원본 메일 컨텍스트가 제공되면 본문의 호칭과 대조하여 불일치를 검출',
     duplicate: '중복 표현: 동일 인사말/맺음말 반복 (예: "감사합니다" 두 번)',
     spacing: '띄어쓰기 오류: 한국어 조사/어미 띄어쓰기 (예: "변경사항은" → "변경 사항은")',
     typo: '오타/맞춤법: 단순 입력 실수, 맞춤법 오류',
@@ -30,7 +30,7 @@ const EmailReviewPrompts = (() => {
     missing: '누락 요소: 인사말, 서명, 맺음말 빠짐',
     awkward: '어색한 표현: 문법적으로 맞지만 자연스럽지 않은 문장',
     particle: '조사 오류: 잘못된 조사 사용 (예: "측정을 변경사항" → "측정에 변경사항")',
-    paragraph: '문단 구분 오류: 호칭 뒤 줄바꿈 누락, 문단 없는 장문, 서명 전 줄바꿈 누락',
+    paragraph: '문단 구분 오류: 호칭 뒤 줄바꿈 누락, 문단 없는 장문, 서명 전 줄바꿈 누락, 연속 빈 줄(2줄 이상) 과다, 문장마다 불필요한 줄바꿈',
   };
 
   function buildSystemPrompt({ enabledCategories, customRules } = {}) {
@@ -51,7 +51,9 @@ ${categoryList}
 ## 문단 구분 규칙
 - 호칭(예: "OOO 님께,") 뒤에는 빈 줄
 - 본문 문단 사이에는 빈 줄
-- 맺음말/서명 앞에는 빈 줄`;
+- 맺음말/서명 앞에는 빈 줄
+- 연속 빈 줄이 2줄 이상이면 1줄로 축소
+- 같은 문단 내 문장 사이에 불필요한 빈 줄이 있으면 제거 (하나의 문단은 줄바꿈 없이 이어 쓰기)`;
 
     if (customRules && customRules.trim()) {
       prompt += `
@@ -73,6 +75,7 @@ ${customRules.trim()}`;
 - 작성자의 문체와 어투를 최대한 유지하세요.
 - 확실한 오류만 지적하세요. 스타일 선호도 차이는 지적하지 마세요.
 - 오탐(false positive)을 최소화하세요.
+- 수신자 정보나 원본 메일 컨텍스트가 함께 제공되면, 본문에서 사용된 호칭(이름, 직책)이 해당 정보와 일치하는지 반드시 대조하세요.
 
 ## 응답 형식
 \`\`\`json
@@ -92,8 +95,38 @@ ${customRules.trim()}`;
     return prompt;
   }
 
-  function buildUserPrompt(emailBody) {
-    return `다음 이메일 본문을 검토해주세요:\n\n${emailBody}`;
+  function buildUserPrompt(emailBody, { recipients, quotedContext } = {}) {
+    let prompt = '';
+
+    if (recipients && recipients.length > 0) {
+      const recipientList = recipients
+        .map(r => {
+          const label = r.type === 'cc' ? ' (참조)' : r.type === 'bcc' ? ' (숨은참조)' : '';
+          return r.name ? `${r.name}${label}` : `${r.email}${label}`;
+        })
+        .join(', ');
+      prompt += `[수신자 정보] ${recipientList}\n`;
+    }
+
+    if (quotedContext) {
+      prompt += '[원본 메일 컨텍스트]\n';
+      if (quotedContext.header) {
+        prompt += `헤더: ${quotedContext.header}\n`;
+      }
+      if (quotedContext.opening) {
+        prompt += `원본 서두: ${quotedContext.opening}\n`;
+      }
+      if (quotedContext.signature) {
+        prompt += `원본 서명: ${quotedContext.signature}\n`;
+      }
+    }
+
+    if (prompt) {
+      prompt += '\n---\n\n';
+    }
+
+    prompt += `다음 이메일 본문을 검토해주세요:\n\n${emailBody}`;
+    return prompt;
   }
 
   function getCategoryInfo(categoryId) {

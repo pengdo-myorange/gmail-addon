@@ -17,7 +17,7 @@
 
   function _isContextValid() {
     try {
-      return !!chrome.runtime?.id;
+      return typeof chrome !== 'undefined' && !!chrome.runtime && !!chrome.runtime.id;
     } catch (e) {
       return false;
     }
@@ -160,6 +160,8 @@
     }
 
     const emailText = EmailExtractor.extractText(composeBody);
+    const recipients = GmailSelectors.findRecipients(composeContainer);
+    const quotedContext = EmailExtractor.extractQuotedContext(composeBody);
 
     const panelCallbacks = {
       onApplyAll: (correctedBody) => {
@@ -238,7 +240,14 @@
       }
     });
 
-    port.postMessage({ type: 'startReview', emailBody: emailText });
+    const message = { type: 'startReview', emailBody: emailText };
+    if (recipients.length > 0) {
+      message.recipients = recipients.map(r => ({ name: r.name, email: r.email, type: r.type }));
+    }
+    if (quotedContext) {
+      message.quotedContext = quotedContext;
+    }
+    port.postMessage(message);
   }
 
   if (document.readyState === 'loading') {

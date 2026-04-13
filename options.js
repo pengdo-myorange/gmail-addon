@@ -16,9 +16,9 @@ const CATEGORIES = [
 ];
 
 const MODEL_DESCRIPTIONS = {
-  'gemini-3.0-flash': '빠른 속도와 좋은 품질의 균형 모델입니다.',
-  'gemini-3.1-flash-lite': '가장 빠르고 경량화된 모델입니다. 간단한 검토에 적합합니다.',
-  'gemini-3.0-pro': '가장 높은 품질의 모델입니다. 복잡한 이메일 검토에 적합합니다.',
+  'gemini-3-flash-preview': '최고 수준의 멀티모달 모델. 빠른 속도와 뛰어난 품질의 균형.',
+  'gemini-3.1-flash-lite-preview': '가장 빠르고 경량화된 모델. 간단한 검토에 적합합니다.',
+  'gemini-3.1-pro-preview': '가장 높은 품질의 추론 모델. 복잡한 이메일 검토에 적합합니다.',
 };
 
 document.addEventListener('DOMContentLoaded', () => {

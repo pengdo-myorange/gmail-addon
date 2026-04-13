@@ -1,52 +1,32 @@
 /**
  * content.js — 오케스트레이터
  * MutationObserver, [검토하기] 버튼 주입, WeakMap 상태 관리
+ * Bottom-up: compose body를 찾아서 컨테이너/버튼을 파생
  */
 
 (() => {
   const REVIEW_BTN_ATTR = 'data-email-review-btn';
   const DEBOUNCE_MS = 200;
+  const POLL_INTERVAL_MS = 1500;
 
   const composeStates = new WeakMap();
+  const processedBodies = new WeakSet();
 
   let debounceTimer = null;
 
   function init() {
-    GmailSelectors.runSelfTestWithRetry(3, 2000).then((result) => {
-      if (!result.allCriticalPassed) {
-        console.warn('[이메일 검토 도우미] 셀렉터 self-test 실패:', result.results.filter(r => r.critical && !r.found));
-        chrome.runtime.sendMessage({ type: 'selectorFailure' });
-      }
-    });
-
+    console.log('[이메일 검토 도우미] 초기화 시작');
     observeDOM();
     scanForComposeWindows();
+    startPolling();
   }
 
   function observeDOM() {
-    const observer = new MutationObserver((mutations) => {
+    const observer = new MutationObserver(() => {
       if (debounceTimer) return;
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
-
-        let hasRelevant = false;
-        for (const mutation of mutations) {
-          if (mutation.addedNodes.length > 0) {
-            for (const node of mutation.addedNodes) {
-              if (node.nodeType === Node.ELEMENT_NODE) {
-                if (node.matches?.('[role="dialog"]') || node.querySelector?.('[role="dialog"]')) {
-                  hasRelevant = true;
-                  break;
-                }
-              }
-            }
-          }
-          if (hasRelevant) break;
-        }
-
-        if (hasRelevant) {
-          scanForComposeWindows();
-        }
+        scanForComposeWindows();
       }, DEBOUNCE_MS);
     });
 
@@ -56,19 +36,36 @@
     });
   }
 
+  function startPolling() {
+    setInterval(() => {
+      scanForComposeWindows();
+    }, POLL_INTERVAL_MS);
+  }
+
   function scanForComposeWindows() {
-    const containers = GmailSelectors.findComposeContainers();
-    for (const container of containers) {
-      injectReviewButton(container);
+    const bodies = GmailSelectors.findAllComposeBodies();
+
+    for (const body of bodies) {
+      if (processedBodies.has(body)) continue;
+
+      const container = GmailSelectors.findComposeContainer(body);
+      if (!container) continue;
+
+      if (container.querySelector(`[${REVIEW_BTN_ATTR}]`)) {
+        processedBodies.add(body);
+        continue;
+      }
+
+      const sendBtn = GmailSelectors.findSendButton(container);
+      if (!sendBtn) continue;
+
+      processedBodies.add(body);
+      injectReviewButton(container, sendBtn);
+      console.log('[이메일 검토 도우미] 검토하기 버튼 주입 완료');
     }
   }
 
-  function injectReviewButton(composeContainer) {
-    if (composeContainer.querySelector(`[${REVIEW_BTN_ATTR}]`)) return;
-
-    const sendBtn = GmailSelectors.findSendButton(composeContainer);
-    if (!sendBtn) return;
-
+  function injectReviewButton(composeContainer, sendBtn) {
     const reviewBtn = document.createElement('div');
     reviewBtn.setAttribute(REVIEW_BTN_ATTR, 'true');
     reviewBtn.setAttribute('role', 'button');
@@ -96,6 +93,8 @@
       lineHeight: '1',
       transition: 'background-color 100ms',
       verticalAlign: 'middle',
+      position: 'relative',
+      zIndex: '1',
     });
 
     reviewBtn.addEventListener('mouseenter', () => {
@@ -111,7 +110,10 @@
       reviewBtn.style.transform = '';
     });
 
-    reviewBtn.addEventListener('click', () => startReview(composeContainer));
+    reviewBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      startReview(composeContainer);
+    });
     reviewBtn.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
@@ -119,11 +121,16 @@
       }
     });
 
-    const sendBtnParent = sendBtn.closest('td') || sendBtn.parentElement;
-    if (sendBtnParent) {
-      sendBtnParent.style.display = 'flex';
-      sendBtnParent.style.alignItems = 'center';
-      sendBtnParent.appendChild(reviewBtn);
+    const toolbar = GmailSelectors.findSendButtonToolbar(sendBtn);
+    if (toolbar) {
+      const computedDisplay = window.getComputedStyle(toolbar).display;
+      if (!computedDisplay.includes('flex')) {
+        toolbar.style.display = 'flex';
+        toolbar.style.alignItems = 'center';
+      }
+      toolbar.appendChild(reviewBtn);
+    } else {
+      sendBtn.parentElement.appendChild(reviewBtn);
     }
   }
 

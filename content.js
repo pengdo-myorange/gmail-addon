@@ -230,12 +230,14 @@
     });
 
     port.onDisconnect.addListener(() => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        const msg = !_isContextValid()
+      let err;
+      try { err = chrome.runtime?.lastError; } catch { err = null; }
+      const valid = _isContextValid();
+      if (err || !valid) {
+        const msg = !valid
           ? '확장기능이 업데이트되었습니다. 페이지를 새로고침해주세요.'
           : '연결이 끊어졌습니다. 다시 시도해주세요.';
-        const code = !_isContextValid() ? 'CONTEXT_INVALID' : 'DISCONNECT';
+        const code = !valid ? 'CONTEXT_INVALID' : 'DISCONNECT';
         ReviewPanel.showError(panelState, code, msg);
       }
     });

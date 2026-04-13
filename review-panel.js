@@ -45,7 +45,9 @@ const ReviewPanel = (() => {
 
     let cssUrl;
     try {
-      cssUrl = chrome.runtime.getURL('review-panel.css');
+      const rt = chrome.runtime;
+      if (!rt || !rt.getURL) { host.remove(); return null; }
+      cssUrl = rt.getURL('review-panel.css');
     } catch (e) {
       host.remove();
       return null;
@@ -382,12 +384,14 @@ const ReviewPanel = (() => {
         state.callbacks.onApplyAll(state.correctedBody);
       }
       if (_isContextValid()) {
-        for (const issue of state.issues) {
-          chrome.runtime.sendMessage({
-            type: 'logUsageEvent',
-            event: { event_type: 'issue_applied', category: issue.category },
-          });
-        }
+        try {
+          for (const issue of state.issues) {
+            chrome.runtime.sendMessage({
+              type: 'logUsageEvent',
+              event: { event_type: 'issue_applied', category: issue.category },
+            });
+          }
+        } catch {}
       }
       destroy(state);
     });
@@ -418,15 +422,20 @@ const ReviewPanel = (() => {
     if (!_isContextValid()) return;
     try {
       const response = await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: 'getTopCategories' }, resolve);
+        if (!_isContextValid()) return resolve(null);
+        try { chrome.runtime.sendMessage({ type: 'getTopCategories' }, resolve); }
+        catch { resolve(null); }
       });
 
       if (!response || !response.topCategories || response.topCategories.length === 0) return;
 
       const totalReviews = await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: 'getReviewHistory' }, (res) => {
-          resolve(res?.history?.length || 0);
-        });
+        if (!_isContextValid()) return resolve(0);
+        try {
+          chrome.runtime.sendMessage({ type: 'getReviewHistory' }, (res) => {
+            resolve(res?.history?.length || 0);
+          });
+        } catch { resolve(0); }
       });
 
       if (totalReviews < 5) return;

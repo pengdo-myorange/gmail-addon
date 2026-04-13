@@ -5,7 +5,7 @@
  */
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_MODEL = 'gemini-3-flash-preview';
+const DEFAULT_MODEL = 'gemini-3.1-flash-lite-preview';
 const STORAGE_KEY_USAGE = 'usage_events';
 const STORAGE_KEY_HISTORY = 'review_history';
 const MAX_USAGE_EVENTS = 1000;
@@ -223,6 +223,9 @@ async function handleReview(port, emailBody, { recipients, quotedContext } = {})
 
     const finalResult = tryParseFinalResult(accumulated);
     if (finalResult) {
+      if (finalResult.corrected_body) {
+        finalResult.corrected_body = normalizeLineBreaks(finalResult.corrected_body, emailBody);
+      }
       port.postMessage({
         type: 'complete',
         totalIssues: finalResult.issues.length,
@@ -371,6 +374,37 @@ ${customRules.trim()}`;
 \`\`\``;
 
   return prompt;
+}
+
+// --- Line Break Post-processing ---
+
+function normalizeLineBreaks(corrected, original) {
+  // 1. 3줄 이상 연속 빈 줄 → 빈 줄 1개로 축소
+  let result = corrected.replace(/\n{3,}/g, '\n\n');
+
+  // 2. 원본의 줄바꿈 밀도를 기준으로 과도한 빈 줄 제거
+  const originalLines = original.split('\n');
+  const correctedLines = result.split('\n');
+
+  const originalBlankCount = originalLines.filter(l => l.trim() === '').length;
+  const correctedBlankCount = correctedLines.filter(l => l.trim() === '').length;
+
+  // 원본보다 빈 줄이 2배 이상 많으면 과도한 빈 줄 제거
+  if (correctedBlankCount > Math.max(originalBlankCount * 2, originalBlankCount + 3)) {
+    const rebuilt = [];
+    for (let i = 0; i < correctedLines.length; i++) {
+      const line = correctedLines[i];
+      const prev = i > 0 ? correctedLines[i - 1] : null;
+      // 연속 빈 줄 방지: 이전 줄도 빈 줄이면 건너뜀
+      if (line.trim() === '' && prev !== null && prev.trim() === '') {
+        continue;
+      }
+      rebuilt.push(line);
+    }
+    result = rebuilt.join('\n');
+  }
+
+  return result;
 }
 
 // --- User Prompt Builder ---

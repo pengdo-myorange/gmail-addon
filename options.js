@@ -13,7 +13,7 @@ const CATEGORIES = [
   { id: 'paragraph', name: '문단 구분 오류' },
 ];
 
-const DEFAULT_MODEL = 'gemini-3-flash-preview';
+const DEFAULT_MODEL = 'gemini-3.1-flash-lite-preview';
 
 document.addEventListener('DOMContentLoaded', () => {
   initOnboarding();

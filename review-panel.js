@@ -139,7 +139,15 @@ const ReviewPanel = (() => {
   function showComplete(state, correctedBody, issues, totalIssues) {
     if (!state?.container) return;
     state.correctedBody = correctedBody;
-    state.issues = issues || [];
+    const rawIssues = issues || [];
+    if (correctedBody) {
+      rawIssues.sort((a, b) => {
+        const posA = correctedBody.indexOf(a.corrected);
+        const posB = correctedBody.indexOf(b.corrected);
+        return (posA === -1 ? Infinity : posA) - (posB === -1 ? Infinity : posB);
+      });
+    }
+    state.issues = rawIssues;
     state.issueChecked = new Array(state.issues.length).fill(true);
     state.container.innerHTML = '';
 

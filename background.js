@@ -1,6 +1,7 @@
 /**
  * background.js — Service Worker
  * Gemini 스트리밍 API, Port 메시지 패싱, 온보딩, 뱃지, 통계/이력
+ * v1.1: 모델 선택, 카테고리 필터, 커스텀 규칙, corrected_body, top3 인사이트
  */
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -10,13 +11,30 @@ const STORAGE_KEY_HISTORY = 'review_history';
 const MAX_USAGE_EVENTS = 1000;
 const MAX_HISTORY_ENTRIES = 50;
 
+const ALL_CATEGORY_IDS = [
+  'recipient_title', 'duplicate', 'spacing', 'typo',
+  'honorific', 'missing', 'awkward', 'particle', 'paragraph',
+];
+
+const CATEGORY_DESCRIPTIONS = {
+  recipient_title: '수신자 호칭 오류: 받는 사람 이름/직책 잘못 표기',
+  duplicate: '중복 표현: 동일 인사말/맺음말 반복',
+  spacing: '띄어쓰기 오류: 한국어 조사/어미 띄어쓰기',
+  typo: '오타/맞춤법: 단순 입력 실수, 맞춤법 오류',
+  honorific: '경어체 불일치: 문장 내/간 존칭 수준 혼용',
+  missing: '누락 요소: 인사말, 서명, 맺음말 빠짐',
+  awkward: '어색한 표현: 문법적으로 맞지만 자연스럽지 않은 문장',
+  particle: '조사 오류: 잘못된 조사 사용',
+  paragraph: '문단 구분 오류: 호칭 뒤 줄바꿈 누락, 문단 없는 장문',
+};
+
 // --- Onboarding ---
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
     chrome.tabs.create({ url: chrome.runtime.getURL('options.html?onboarding=true') });
     chrome.action.setBadgeText({ text: '!' });
-    chrome.action.setBadgeBackgroundColor({ color: '#D93025' });
+    chrome.action.setBadgeBackgroundColor({ color: '#FF6B2C' });
   }
 });
 
@@ -38,7 +56,7 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-// --- Simple message listener for non-streaming requests ---
+// --- Simple message listener ---
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'getApiKey') {
@@ -79,6 +97,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'getTopCategories') {
+    getTopCategories().then((top) => sendResponse({ topCategories: top }));
+    return true;
+  }
+
   if (msg.type === 'clearBadge') {
     chrome.action.setBadgeText({ text: '' });
     sendResponse({ success: true });
@@ -96,10 +119,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // --- Gemini Streaming Review ---
 
 async function handleReview(port, emailBody) {
-  let apiKey;
+  let apiKey, selectedModel, enabledCategories, customRules;
   try {
-    const result = await chrome.storage.sync.get(['apiKey']);
+    const result = await chrome.storage.sync.get([
+      'apiKey', 'selectedModel', 'enabledCategories', 'customRules'
+    ]);
     apiKey = result.apiKey;
+    selectedModel = result.selectedModel || DEFAULT_MODEL;
+    enabledCategories = result.enabledCategories || ALL_CATEGORY_IDS;
+    customRules = result.customRules || '';
   } catch (e) {
     port.postMessage({ type: 'error', code: 'STORAGE_ERROR', message: 'API 키를 읽을 수 없습니다.' });
     return;
@@ -113,10 +141,10 @@ async function handleReview(port, emailBody) {
   await logUsageEvent({ event_type: 'review_started' });
   port.postMessage({ type: 'status', status: 'loading' });
 
-  const systemPrompt = buildSystemPrompt();
+  const systemPrompt = buildSystemPrompt({ enabledCategories, customRules });
   const userPrompt = `다음 이메일 본문을 검토해주세요:\n\n${emailBody}`;
 
-  const url = `${GEMINI_API_BASE}/${DEFAULT_MODEL}:streamGenerateContent?key=${apiKey}&alt=sse`;
+  const url = `${GEMINI_API_BASE}/${selectedModel}:streamGenerateContent?key=${apiKey}&alt=sse`;
   const body = {
     contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
     systemInstruction: { parts: [{ text: systemPrompt }] },
@@ -169,28 +197,24 @@ async function handleReview(port, emailBody) {
             accumulated += text;
             const issues = tryParsePartialIssues(accumulated);
             if (issues && issues.length > lastParsedCount) {
-              const newIssues = issues.slice(lastParsedCount);
-              for (const issue of newIssues) {
-                port.postMessage({ type: 'issue', issue });
-              }
+              port.postMessage({ type: 'streamingCount', count: issues.length });
               lastParsedCount = issues.length;
             }
           }
         } catch (e) {
-          // partial JSON, continue accumulating
+          // partial JSON, continue
         }
       }
     }
 
     const finalResult = tryParseFinalResult(accumulated);
     if (finalResult) {
-      if (finalResult.issues.length > lastParsedCount) {
-        const remaining = finalResult.issues.slice(lastParsedCount);
-        for (const issue of remaining) {
-          port.postMessage({ type: 'issue', issue });
-        }
-      }
-      port.postMessage({ type: 'complete', totalIssues: finalResult.issues.length });
+      port.postMessage({
+        type: 'complete',
+        totalIssues: finalResult.issues.length,
+        correctedBody: finalResult.corrected_body || null,
+        issues: finalResult.issues,
+      });
 
       await saveReviewHistory({
         timestamp: Date.now(),
@@ -199,6 +223,13 @@ async function handleReview(port, emailBody) {
         applied_count: 0,
         ignored_count: 0,
       });
+
+      for (const issue of finalResult.issues) {
+        await logUsageEvent({
+          event_type: 'issue_found',
+          category: issue.category,
+        });
+      }
       await logUsageEvent({ event_type: 'review_completed' });
 
       chrome.action.setBadgeText({ text: '' });
@@ -220,7 +251,15 @@ async function handleReview(port, emailBody) {
 // --- API Key Test ---
 
 async function handleTestApiKey(port, apiKey) {
-  const url = `${GEMINI_API_BASE}/${DEFAULT_MODEL}:generateContent?key=${apiKey}`;
+  let selectedModel;
+  try {
+    const result = await chrome.storage.sync.get(['selectedModel']);
+    selectedModel = result.selectedModel || DEFAULT_MODEL;
+  } catch (e) {
+    selectedModel = DEFAULT_MODEL;
+  }
+
+  const url = `${GEMINI_API_BASE}/${selectedModel}:generateContent?key=${apiKey}`;
   const body = {
     contents: [{ role: 'user', parts: [{ text: '안녕' }] }],
     generationConfig: { maxOutputTokens: 10 },
@@ -243,31 +282,42 @@ async function handleTestApiKey(port, apiKey) {
   }
 }
 
-// --- Parsing helpers ---
+// --- System Prompt Builder ---
 
-function buildSystemPrompt() {
-  return `당신은 한국어 비즈니스 이메일 전문 검토자입니다.
-사용자가 제출한 이메일 본문을 분석하여, 아래 9개 카테고리에 해당하는 오류를 찾아 수정안을 제시하세요.
+function buildSystemPrompt({ enabledCategories, customRules } = {}) {
+  const activeCats = enabledCategories && enabledCategories.length > 0
+    ? enabledCategories.filter(id => CATEGORY_DESCRIPTIONS[id])
+    : ALL_CATEGORY_IDS;
 
-## 오류 카테고리
-1. recipient_title (수신자 호칭 오류): 받는 사람 이름/직책을 잘못 표기
-2. duplicate (중복 표현): 동일 인사말/맺음말 반복 (예: "감사합니다" 두 번)
-3. spacing (띄어쓰기 오류): 한국어 조사/어미 띄어쓰기 (예: "변경사항은" → "변경 사항은")
-4. typo (오타/맞춤법): 단순 입력 실수, 맞춤법 오류
-5. honorific (경어체 불일치): 문장 내/간 존칭 수준 혼용 (예: "~합니다"와 "~해요" 혼재)
-6. missing (누락 요소): 인사말, 서명, 맺음말 빠짐
-7. awkward (어색한 표현): 문법적으로 맞지만 자연스럽지 않은 문장
-8. particle (조사 오류): 잘못된 조사 사용 (예: "측정을 변경사항" → "측정에 변경사항")
-9. paragraph (문단 구분 오류): 호칭 뒤 줄바꿈 누락, 문단 없는 장문, 서명 전 줄바꿈 누락
+  const categoryList = activeCats
+    .map((id, i) => `${i + 1}. ${id} (${CATEGORY_DESCRIPTIONS[id]})`)
+    .join('\n');
+
+  let prompt = `당신은 한국어 비즈니스 이메일 전문 검토자입니다.
+사용자가 제출한 이메일 본문을 분석하여, 아래 카테고리에 해당하는 오류를 찾아 수정하세요.
+
+## 검토 카테고리
+${categoryList}
 
 ## 문단 구분 규칙
 - 호칭(예: "OOO 님께,") 뒤에는 빈 줄
 - 본문 문단 사이에는 빈 줄
-- 맺음말/서명 앞에는 빈 줄
+- 맺음말/서명 앞에는 빈 줄`;
+
+  if (customRules && customRules.trim()) {
+    prompt += `
+
+## 사용자 지정 규칙
+${customRules.trim()}`;
+  }
+
+  prompt += `
 
 ## 출력 규칙
 - 반드시 JSON 형식으로 응답하세요.
-- 오류가 없으면 빈 배열을 반환하세요: {"issues": []}
+- corrected_body: 모든 수정 사항을 반영한 전체 이메일 본문을 포함하세요.
+- issues 배열: 각 수정 사항을 개별 항목으로 나열하세요.
+- 오류가 없으면: {"corrected_body": "원본 그대로", "issues": []}
 - original 필드: 문제가 되는 원문 텍스트 (문맥 파악 가능한 최소 범위)
 - corrected 필드: 수정된 텍스트
 - explanation 필드: 왜 수정이 필요한지 한국어로 간결하게 설명
@@ -278,6 +328,7 @@ function buildSystemPrompt() {
 ## 응답 형식
 \`\`\`json
 {
+  "corrected_body": "수정된 전체 이메일 본문",
   "issues": [
     {
       "category": "카테고리_id",
@@ -288,7 +339,11 @@ function buildSystemPrompt() {
   ]
 }
 \`\`\``;
+
+  return prompt;
 }
+
+// --- Parsing helpers ---
 
 function tryParsePartialIssues(text) {
   try {
@@ -298,7 +353,6 @@ function tryParsePartialIssues(text) {
       return parsed.issues;
     }
   } catch (e) {
-    // try to extract partial array
     try {
       const match = text.match(/"issues"\s*:\s*\[/);
       if (match) {
@@ -314,8 +368,7 @@ function tryParsePartialIssues(text) {
         }
         if (lastCompleteItem > startIdx) {
           const partial = text.substring(startIdx, lastCompleteItem + 1) + ']';
-          const arr = JSON.parse(partial);
-          return arr;
+          return JSON.parse(partial);
         }
       }
     } catch (e2) {
@@ -342,6 +395,28 @@ function summarizeCategories(issues) {
     counts[issue.category] = (counts[issue.category] || 0) + 1;
   }
   return Object.entries(counts).map(([name, count]) => ({ name, count }));
+}
+
+// --- Top 3 Categories ---
+
+async function getTopCategories() {
+  try {
+    const result = await chrome.storage.local.get([STORAGE_KEY_USAGE]);
+    const events = result[STORAGE_KEY_USAGE] || [];
+    const categoryCounts = {};
+    for (const evt of events) {
+      if (evt.event_type === 'issue_found' && evt.category) {
+        categoryCounts[evt.category] = (categoryCounts[evt.category] || 0) + 1;
+      }
+    }
+    const sorted = Object.entries(categoryCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([category, count]) => ({ category, count }));
+    return sorted;
+  } catch (e) {
+    return [];
+  }
 }
 
 // --- Usage stats & review history ---

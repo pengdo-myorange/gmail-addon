@@ -1,6 +1,6 @@
 /**
  * options.js — 설정 페이지 로직
- * API 키, 온보딩, 검토 이력, 사용 통계, 카테고리 토글(disabled)
+ * v1.1: API 키, 모델 선택, 카테고리 토글, 커스텀 규칙, 검토 이력, 사용 통계
  */
 
 const CATEGORIES = [
@@ -15,10 +15,18 @@ const CATEGORIES = [
   { id: 'paragraph', name: '문단 구분 오류' },
 ];
 
+const MODEL_DESCRIPTIONS = {
+  'gemini-2.0-flash': '빠른 속도와 좋은 품질의 균형 모델입니다.',
+  'gemini-2.0-flash-lite': '가장 빠르고 경량화된 모델입니다. 간단한 검토에 적합합니다.',
+  'gemini-2.5-flash': '가장 높은 품질의 모델입니다. 복잡한 이메일 검토에 적합합니다.',
+};
+
 document.addEventListener('DOMContentLoaded', () => {
   initOnboarding();
   initApiKey();
+  initModelSelect();
   initCategories();
+  initCustomRules();
   loadHistory();
   loadStats();
 });
@@ -112,19 +120,94 @@ function initApiKey() {
   });
 }
 
-// --- 카테고리 토글 (v1.1 disabled) ---
+// --- 모델 선택 ---
+
+function initModelSelect() {
+  const select = document.getElementById('model-select');
+  const descEl = document.getElementById('model-description');
+
+  chrome.storage.sync.get(['selectedModel'], (result) => {
+    if (result.selectedModel) {
+      select.value = result.selectedModel;
+    }
+    descEl.textContent = MODEL_DESCRIPTIONS[select.value] || '';
+  });
+
+  select.addEventListener('change', () => {
+    const model = select.value;
+    chrome.storage.sync.set({ selectedModel: model });
+    descEl.textContent = MODEL_DESCRIPTIONS[model] || '';
+  });
+}
+
+// --- 카테고리 토글 ---
 
 function initCategories() {
   const list = document.getElementById('category-list');
+
+  chrome.storage.sync.get(['enabledCategories'], (result) => {
+    const enabled = result.enabledCategories || CATEGORIES.map(c => c.id);
+
+    for (const cat of CATEGORIES) {
+      const item = document.createElement('div');
+      item.className = 'category-item';
+
+      const label = document.createElement('label');
+      label.setAttribute('for', `cat-${cat.id}`);
+      label.textContent = cat.name;
+
+      const toggle = document.createElement('label');
+      toggle.className = 'toggle-switch';
+
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.id = `cat-${cat.id}`;
+      input.checked = enabled.includes(cat.id);
+      input.addEventListener('change', saveCategories);
+
+      const slider = document.createElement('span');
+      slider.className = 'toggle-slider';
+
+      toggle.appendChild(input);
+      toggle.appendChild(slider);
+
+      item.appendChild(label);
+      item.appendChild(toggle);
+      list.appendChild(item);
+    }
+  });
+}
+
+function saveCategories() {
+  const enabled = [];
   for (const cat of CATEGORIES) {
-    const item = document.createElement('div');
-    item.className = 'category-item';
-    item.innerHTML = `
-      <label for="cat-${cat.id}">${cat.name}</label>
-      <input type="checkbox" id="cat-${cat.id}" checked disabled>
-    `;
-    list.appendChild(item);
+    const checkbox = document.getElementById(`cat-${cat.id}`);
+    if (checkbox && checkbox.checked) {
+      enabled.push(cat.id);
+    }
   }
+  chrome.storage.sync.set({ enabledCategories: enabled });
+}
+
+// --- 사용자 규칙 ---
+
+function initCustomRules() {
+  const textarea = document.getElementById('custom-rules');
+  const saveBtn = document.getElementById('save-rules-btn');
+  const feedback = document.getElementById('rules-save-feedback');
+
+  chrome.storage.sync.get(['customRules'], (result) => {
+    if (result.customRules) {
+      textarea.value = result.customRules;
+    }
+  });
+
+  saveBtn.addEventListener('click', () => {
+    chrome.storage.sync.set({ customRules: textarea.value }, () => {
+      feedback.classList.add('visible');
+      setTimeout(() => feedback.classList.remove('visible'), 2000);
+    });
+  });
 }
 
 // --- 검토 이력 ---
@@ -182,11 +265,11 @@ function loadStats() {
     const totalReviews = events.filter(e => e.event_type === 'review_started').length;
     const totalApplied = events.filter(e => e.event_type === 'issue_applied').length;
     const totalIgnored = events.filter(e => e.event_type === 'issue_ignored').length;
-    const totalErrors = events.filter(e => e.event_type === 'error').length;
+    const totalIssues = events.filter(e => e.event_type === 'issue_found').length;
 
     const categoryCounts = {};
     for (const e of events) {
-      if ((e.event_type === 'issue_applied' || e.event_type === 'issue_ignored') && e.category) {
+      if (e.event_type === 'issue_found' && e.category) {
         categoryCounts[e.category] = (categoryCounts[e.category] || 0) + 1;
       }
     }
@@ -204,12 +287,12 @@ function loadStats() {
           <div class="stat-label">총 검토 수</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">${totalApplied}</div>
-          <div class="stat-label">반영된 수정</div>
+          <div class="stat-value">${totalIssues}</div>
+          <div class="stat-label">발견된 이슈</div>
         </div>
         <div class="stat-card">
-          <div class="stat-value">${totalIgnored}</div>
-          <div class="stat-label">무시된 수정</div>
+          <div class="stat-value">${totalApplied}</div>
+          <div class="stat-label">반영된 수정</div>
         </div>
         <div class="stat-card">
           <div class="stat-value">${totalApplied + totalIgnored > 0 ? Math.round(totalApplied / (totalApplied + totalIgnored) * 100) : 0}%</div>

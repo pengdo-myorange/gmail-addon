@@ -152,8 +152,32 @@ const TextReplacer = (() => {
     element.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  function replaceEntireBody(composeBody, newText) {
+    if (!composeBody || !newText) return false;
+
+    composeBody.focus();
+
+    try {
+      document.execCommand('selectAll');
+      const success = document.execCommand('insertText', false, newText);
+      if (success) return true;
+    } catch (e) {
+      // execCommand failed
+    }
+
+    const htmlContent = newText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>');
+    composeBody.innerHTML = htmlContent;
+    _dispatchInputEvent(composeBody);
+    return true;
+  }
+
   return {
     applyCorrection,
     applyAllCorrections,
+    replaceEntireBody,
   };
 })();

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "이메일 검토 도우미",
   "description": "Gmail 발송 전 이메일의 오류를 잡아내고 수정해주는 확장기능",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "permissions": [
     "activeTab",
     "storage"

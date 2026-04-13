@@ -1,7 +1,7 @@
 /**
  * content.js — 오케스트레이터
  * MutationObserver, [검토하기] 버튼 주입, WeakMap 상태 관리
- * Bottom-up: compose body를 찾아서 컨테이너/버튼을 파생
+ * v1.1: 모달 패널, 전체 반영, 오렌지 디자인
  */
 
 (() => {
@@ -81,9 +81,9 @@
       padding: '0 16px',
       marginLeft: '8px',
       borderRadius: '18px',
-      border: '1px solid #1a73e8',
+      border: '1px solid #FF6B2C',
       backgroundColor: '#ffffff',
-      color: '#1a73e8',
+      color: '#FF6B2C',
       fontSize: '14px',
       fontWeight: '500',
       fontFamily: 'Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
@@ -98,7 +98,7 @@
     });
 
     reviewBtn.addEventListener('mouseenter', () => {
-      reviewBtn.style.backgroundColor = '#e8f0fe';
+      reviewBtn.style.backgroundColor = '#FFF3E0';
     });
     reviewBtn.addEventListener('mouseleave', () => {
       reviewBtn.style.backgroundColor = '#ffffff';
@@ -135,11 +135,6 @@
   }
 
   function startReview(composeContainer) {
-    const existingState = composeStates.get(composeContainer);
-    if (existingState && existingState.panelState) {
-      ReviewPanel.destroy(existingState.panelState);
-    }
-
     const composeBody = GmailSelectors.findComposeBody(composeContainer);
     if (!composeBody) {
       console.warn('[이메일 검토 도우미] 작성 본문을 찾을 수 없습니다.');
@@ -147,33 +142,28 @@
     }
 
     const emailText = EmailExtractor.extractText(composeBody);
-    if (!emailText || emailText.trim().length === 0) {
-      const panelState = ReviewPanel.create(composeContainer, {});
-      ReviewPanel.showError(panelState, 'EMPTY', '이메일 본문이 비어있습니다.');
-      composeStates.set(composeContainer, { panelState });
-      return;
-    }
-
-    if (!EmailExtractor.isKorean(emailText)) {
-      const panelState = ReviewPanel.create(composeContainer, {});
-      ReviewPanel.showError(panelState, 'NOT_KOREAN', '한국어 이메일만 검토할 수 있습니다.');
-      composeStates.set(composeContainer, { panelState });
-      return;
-    }
 
     const panelCallbacks = {
-      onApply: (issue) => {
-        TextReplacer.applyCorrection(composeBody, issue.original, issue.corrected);
-      },
-      onIgnore: () => {},
-      onApplyAll: (issues) => {
-        TextReplacer.applyAllCorrections(composeBody, issues);
+      onApplyAll: (correctedBody) => {
+        TextReplacer.replaceEntireBody(composeBody, correctedBody);
       },
       onRetry: () => startReview(composeContainer),
     };
 
-    const panelState = ReviewPanel.create(composeContainer, panelCallbacks);
+    const panelState = ReviewPanel.create(panelCallbacks);
     composeStates.set(composeContainer, { panelState, composeBody });
+
+    if (!emailText || emailText.trim().length === 0) {
+      ReviewPanel.showError(panelState, 'EMPTY', '이메일 본문이 비어있습니다.');
+      return;
+    }
+
+    if (!EmailExtractor.isKorean(emailText)) {
+      ReviewPanel.showError(panelState, 'NOT_KOREAN', '한국어 이메일만 검토할 수 있습니다.');
+      return;
+    }
+
+    ReviewPanel.showLoading(panelState);
 
     const port = chrome.runtime.connect({ name: 'review' });
 
@@ -182,20 +172,20 @@
         case 'status':
           if (msg.status === 'loading') {
             ReviewPanel.showLoading(panelState);
-          } else if (msg.status === 'streaming') {
-            ReviewPanel.showStreaming(panelState);
           }
           break;
 
-        case 'issue':
-          if (panelState.panel.querySelector('.skeleton-card')) {
-            ReviewPanel.showStreaming(panelState);
-          }
-          ReviewPanel.addStreamingIssue(panelState, msg.issue);
+        case 'streamingCount':
+          ReviewPanel.showStreaming(panelState, msg.count);
           break;
 
         case 'complete':
-          ReviewPanel.showComplete(panelState, msg.totalIssues);
+          ReviewPanel.showComplete(
+            panelState,
+            msg.correctedBody,
+            msg.issues,
+            msg.totalIssues
+          );
           break;
 
         case 'error':

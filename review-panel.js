@@ -1,18 +1,36 @@
 /**
- * review-panel.js — Shadow DOM 리뷰 패널 UI
- * 6개 상태 화면, 카드 스트리밍, 접근성
+ * review-panel.js — 모달 다이얼로그 리뷰 패널
+ * document.body에 Shadow DOM 모달 삽입
+ * v1.1: 수정본 + 변경 요약 리스트 + TOP 3 인사이트
  */
 
 const ReviewPanel = (() => {
-  const PANEL_ATTR = 'data-email-review-panel';
+  const MODAL_ATTR = 'data-email-review-modal';
 
-  function create(composeContainer, callbacks) {
-    const existing = composeContainer.querySelector(`[${PANEL_ATTR}]`);
-    if (existing) existing.remove();
+  const CATEGORY_NAMES = {
+    recipient_title: '수신자 호칭',
+    duplicate: '중복 표현',
+    spacing: '띄어쓰기',
+    typo: '오타/맞춤법',
+    honorific: '경어체',
+    missing: '누락 요소',
+    awkward: '어색한 표현',
+    particle: '조사 오류',
+    paragraph: '문단 구분',
+  };
+
+  function create(callbacks) {
+    destroyAll();
 
     const host = document.createElement('div');
-    host.setAttribute(PANEL_ATTR, 'true');
-    composeContainer.appendChild(host);
+    host.setAttribute(MODAL_ATTR, 'true');
+    host.style.position = 'fixed';
+    host.style.top = '0';
+    host.style.left = '0';
+    host.style.width = '0';
+    host.style.height = '0';
+    host.style.zIndex = '999999';
+    document.body.appendChild(host);
 
     const shadow = host.attachShadow({ mode: 'open' });
 
@@ -22,42 +40,64 @@ const ReviewPanel = (() => {
     link.href = cssUrl;
     shadow.appendChild(link);
 
-    const panel = document.createElement('div');
-    panel.className = 'review-panel';
-    panel.setAttribute('role', 'complementary');
-    panel.setAttribute('aria-label', '이메일 검토 결과');
-    shadow.appendChild(panel);
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', '이메일 검토 결과');
+    shadow.appendChild(overlay);
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) destroy(state);
+    });
+
+    const container = document.createElement('div');
+    container.className = 'modal-container';
+    overlay.appendChild(container);
 
     const state = {
       host,
       shadow,
-      panel,
-      issues: [],
-      resolvedCount: 0,
-      totalIssues: 0,
+      overlay,
+      container,
       callbacks,
+      issues: [],
+      correctedBody: null,
+      streamingCount: 0,
     };
 
-    showLoading(state);
+    document.addEventListener('keydown', state._escHandler = (e) => {
+      if (e.key === 'Escape') destroy(state);
+    });
+
     return state;
   }
 
   function destroy(state) {
     if (!state || !state.host) return;
-    state.panel.classList.add('closing');
+    if (state._escHandler) {
+      document.removeEventListener('keydown', state._escHandler);
+    }
+    state.overlay.classList.add('closing');
     setTimeout(() => {
       state.host.remove();
     }, 150);
   }
 
-  // --- State screens ---
+  function destroyAll() {
+    document.querySelectorAll(`[${MODAL_ATTR}]`).forEach(el => el.remove());
+  }
+
+  // --- State Screens ---
 
   function showLoading(state) {
-    state.panel.innerHTML = '';
+    state.container.innerHTML = '';
 
-    const summaryBar = _createSummaryBar('검토 중...', state);
-    state.panel.appendChild(summaryBar);
+    const header = _buildHeader('검토 중...', state);
+    state.container.appendChild(header);
 
+    const body = document.createElement('div');
+    body.className = 'modal-body';
     for (let i = 0; i < 3; i++) {
       const skeleton = document.createElement('div');
       skeleton.className = 'skeleton-card';
@@ -66,84 +106,91 @@ const ReviewPanel = (() => {
         <div class="skeleton-line long"></div>
         <div class="skeleton-line medium"></div>
       `;
-      state.panel.appendChild(skeleton);
+      body.appendChild(skeleton);
+    }
+    state.container.appendChild(body);
+  }
+
+  function showStreaming(state, count) {
+    state.streamingCount = count || state.streamingCount;
+    const titleEl = state.container.querySelector('.modal-title');
+    if (titleEl) {
+      titleEl.textContent = `검토 중... (${state.streamingCount}건 발견)`;
     }
   }
 
-  function showStreaming(state) {
-    state.panel.innerHTML = '';
+  function showComplete(state, correctedBody, issues, totalIssues) {
+    state.correctedBody = correctedBody;
+    state.issues = issues || [];
+    state.container.innerHTML = '';
 
-    const summaryBar = _createSummaryBar(`검토 중... (${state.issues.length}건 발견)`, state);
-    summaryBar.id = 'streaming-summary';
-    state.panel.appendChild(summaryBar);
-
-    const list = document.createElement('ul');
-    list.className = 'issue-list';
-    list.setAttribute('role', 'list');
-    state.panel.appendChild(list);
-
-    for (let i = 0; i < state.issues.length; i++) {
-      const card = _createIssueCard(state.issues[i], i, state);
-      card.style.animationDelay = `${i * 100}ms`;
-      list.appendChild(card);
-    }
-
-    const indicator = document.createElement('div');
-    indicator.className = 'streaming-indicator';
-    indicator.innerHTML = '<div class="spinner"></div><span>추가 오류 검색 중...</span>';
-    state.panel.appendChild(indicator);
-  }
-
-  function addStreamingIssue(state, issue) {
-    state.issues.push(issue);
-
-    const summary = state.panel.querySelector('#streaming-summary .summary-text');
-    if (summary) {
-      summary.textContent = `검토 중... (${state.issues.length}건 발견)`;
-    }
-
-    const list = state.panel.querySelector('.issue-list');
-    if (list) {
-      const card = _createIssueCard(issue, state.issues.length - 1, state);
-      card.style.animationDelay = `${(state.issues.length - 1) * 100}ms`;
-      list.appendChild(card);
-    }
-  }
-
-  function showComplete(state, totalIssues) {
-    state.totalIssues = totalIssues;
-    state.panel.innerHTML = '';
-
-    if (totalIssues === 0) {
+    if (totalIssues === 0 || state.issues.length === 0) {
       _showNoIssues(state);
       return;
     }
 
-    const summaryBar = _createSummaryBar(`${totalIssues}건의 수정 제안`, state);
-    state.panel.appendChild(summaryBar);
+    const header = _buildHeader(`검토 완료 — ${totalIssues}건의 수정 제안`, state);
+    state.container.appendChild(header);
 
-    const list = document.createElement('ul');
-    list.className = 'issue-list';
-    list.setAttribute('role', 'list');
-    state.panel.appendChild(list);
+    const body = document.createElement('div');
+    body.className = 'modal-body';
 
-    for (let i = 0; i < state.issues.length; i++) {
-      const card = _createIssueCard(state.issues[i], i, state);
-      list.appendChild(card);
+    if (correctedBody) {
+      const correctedSection = document.createElement('div');
+      correctedSection.className = 'corrected-body-section';
+
+      const label = document.createElement('div');
+      label.className = 'section-label';
+      label.textContent = '수정된 이메일';
+      correctedSection.appendChild(label);
+
+      const card = document.createElement('div');
+      card.className = 'corrected-body-card';
+      card.innerHTML = _highlightCorrections(correctedBody, issues);
+      correctedSection.appendChild(card);
+
+      body.appendChild(correctedSection);
     }
 
-    const actionBar = _createActionBar(state);
-    state.panel.appendChild(actionBar);
+    const divider = document.createElement('div');
+    divider.className = 'section-divider';
+    body.appendChild(divider);
 
-    const firstApply = state.shadow.querySelector('.btn-apply');
-    if (firstApply) firstApply.focus();
+    const summarySection = document.createElement('div');
+    summarySection.className = 'changes-summary-section';
+
+    const summaryLabel = document.createElement('div');
+    summaryLabel.className = 'section-label';
+    summaryLabel.textContent = `변경 사항 (${issues.length}건)`;
+    summarySection.appendChild(summaryLabel);
+
+    const changesList = document.createElement('ul');
+    changesList.className = 'changes-list';
+
+    for (const issue of issues) {
+      const item = _buildChangeItem(issue);
+      changesList.appendChild(item);
+    }
+
+    summarySection.appendChild(changesList);
+    body.appendChild(summarySection);
+
+    state.container.appendChild(body);
+
+    _loadInsight(state);
+
+    const footer = _buildFooter(state, totalIssues);
+    state.container.appendChild(footer);
   }
 
   function showError(state, code, message) {
-    state.panel.innerHTML = '';
+    state.container.innerHTML = '';
 
-    const summaryBar = _createSummaryBar('오류', state);
-    state.panel.appendChild(summaryBar);
+    const header = _buildHeader('오류', state);
+    state.container.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
 
     const screen = document.createElement('div');
     screen.className = 'state-screen';
@@ -154,265 +201,245 @@ const ReviewPanel = (() => {
         <div class="state-message">API 키를 설정해주세요</div>
         <a class="btn-settings-link" id="open-settings">설정 열기</a>
       `;
+    } else if (code === 'EMPTY') {
+      screen.innerHTML = `
+        <div class="state-icon">📝</div>
+        <div class="state-message">${_escapeHtml(message)}</div>
+      `;
+    } else if (code === 'NOT_KOREAN') {
+      screen.innerHTML = `
+        <div class="state-icon">🇰🇷</div>
+        <div class="state-message">${_escapeHtml(message)}</div>
+      `;
     } else {
       screen.innerHTML = `
         <div class="state-icon">⚠️</div>
         <div class="state-message">${_escapeHtml(message || '검토 서비스를 사용할 수 없습니다')}</div>
       `;
     }
-    state.panel.appendChild(screen);
+    body.appendChild(screen);
+    state.container.appendChild(body);
 
-    const actionBar = document.createElement('div');
-    actionBar.className = 'action-bar';
-    actionBar.innerHTML = '<div class="action-left"></div>';
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer';
 
-    if (code !== 'NO_API_KEY') {
+    const left = document.createElement('div');
+    left.className = 'footer-left';
+
+    if (code !== 'NO_API_KEY' && code !== 'EMPTY' && code !== 'NOT_KOREAN') {
       const retryBtn = document.createElement('button');
       retryBtn.className = 'btn-retry';
       retryBtn.textContent = '다시 시도';
       retryBtn.addEventListener('click', () => {
+        destroy(state);
         if (state.callbacks && state.callbacks.onRetry) state.callbacks.onRetry();
       });
-      actionBar.querySelector('.action-left').appendChild(retryBtn);
+      left.appendChild(retryBtn);
     }
 
-    state.panel.appendChild(actionBar);
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn-retry';
+    closeBtn.textContent = '닫기';
+    closeBtn.addEventListener('click', () => destroy(state));
+    left.appendChild(closeBtn);
 
-    const settingsLink = screen.querySelector('#open-settings');
+    footer.appendChild(left);
+    state.container.appendChild(footer);
+
+    const settingsLink = body.querySelector('#open-settings');
     if (settingsLink) {
       settingsLink.addEventListener('click', (e) => {
         e.preventDefault();
-        chrome.runtime.sendMessage({ type: 'openOptions' });
         chrome.runtime.openOptionsPage?.();
+        destroy(state);
       });
     }
   }
 
   function _showNoIssues(state) {
-    state.panel.innerHTML = '';
+    state.container.innerHTML = '';
 
-    const summaryBar = _createSummaryBar('검토 완료', state);
-    state.panel.appendChild(summaryBar);
+    const header = _buildHeader('검토 완료', state);
+    state.container.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
 
     const screen = document.createElement('div');
     screen.className = 'state-screen';
     screen.innerHTML = `
       <div class="state-icon">✅</div>
-      <div class="state-message">수정 사항이 없습니다</div>
+      <div class="state-message">수정 사항이 없습니다.<br>잘 작성된 이메일입니다!</div>
     `;
-    state.panel.appendChild(screen);
+    body.appendChild(screen);
+    state.container.appendChild(body);
 
-    state.panel.classList.add('auto-close-panel');
-    setTimeout(() => destroy(state), 3000);
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer';
+    const left = document.createElement('div');
+    left.className = 'footer-left';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'btn-apply-all';
+    closeBtn.textContent = '닫기';
+    closeBtn.addEventListener('click', () => destroy(state));
+    left.appendChild(closeBtn);
+    footer.appendChild(left);
+    state.container.appendChild(footer);
   }
 
-  // --- Helpers ---
+  // --- Builders ---
 
-  function _createSummaryBar(text, state) {
-    const bar = document.createElement('div');
-    bar.className = 'summary-bar';
-    bar.setAttribute('role', 'heading');
-    bar.setAttribute('aria-level', '2');
+  function _buildHeader(titleText, state) {
+    const header = document.createElement('div');
+    header.className = 'modal-header';
 
-    const span = document.createElement('span');
-    span.className = 'summary-text';
-    span.textContent = text;
-    bar.appendChild(span);
+    const title = document.createElement('div');
+    title.className = 'modal-title';
+    title.textContent = titleText;
+    header.appendChild(title);
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'close-btn';
-    closeBtn.setAttribute('aria-label', '검토 패널 닫기');
-    closeBtn.textContent = '✕';
+    closeBtn.setAttribute('aria-label', '닫기');
+    closeBtn.innerHTML = '&#10005;';
     closeBtn.addEventListener('click', () => destroy(state));
-    bar.appendChild(closeBtn);
+    header.appendChild(closeBtn);
 
-    return bar;
+    return header;
   }
 
-  function _createIssueCard(issue, index, state) {
-    const card = document.createElement('li');
-    card.className = 'issue-card';
-    card.setAttribute('role', 'listitem');
-    card.dataset.index = index;
+  function _buildChangeItem(issue) {
+    const item = document.createElement('li');
+    item.className = 'change-item';
 
-    const categoryInfo = EmailReviewPrompts.getCategoryInfo(issue.category);
-    const catName = categoryInfo ? categoryInfo.name : issue.category;
+    const categoryInfo = EmailReviewPrompts ? EmailReviewPrompts.getCategoryInfo(issue.category) : null;
+    const catName = CATEGORY_NAMES[issue.category] || issue.category;
     const catBg = categoryInfo ? categoryInfo.color.bg : '#f1f3f4';
     const catText = categoryInfo ? categoryInfo.color.text : '#5f6368';
 
-    const header = document.createElement('div');
-    header.className = 'card-header';
-
-    const content = document.createElement('div');
-    content.className = 'card-content';
-
     const pill = document.createElement('span');
-    pill.className = 'category-pill';
+    pill.className = 'change-category';
     pill.style.backgroundColor = catBg;
     pill.style.color = catText;
     pill.textContent = catName;
-    content.appendChild(pill);
+    item.appendChild(pill);
 
-    const original = document.createElement('div');
-    original.className = 'original-text';
-    original.textContent = issue.original;
-    content.appendChild(original);
+    const detail = document.createElement('div');
+    detail.className = 'change-detail';
 
-    const corrected = document.createElement('div');
-    corrected.className = 'corrected-text';
-    corrected.textContent = issue.corrected;
-    content.appendChild(corrected);
+    const textLine = document.createElement('div');
+    textLine.className = 'change-text';
+    textLine.innerHTML = `${_escapeHtml(issue.original)}<span class="arrow">&rarr;</span>${_escapeHtml(issue.corrected)}`;
+    detail.appendChild(textLine);
 
     if (issue.explanation) {
       const explanation = document.createElement('div');
-      explanation.className = 'explanation-text';
+      explanation.className = 'change-explanation';
       explanation.textContent = issue.explanation;
-      content.appendChild(explanation);
+      detail.appendChild(explanation);
     }
 
-    header.appendChild(content);
-
-    const actions = document.createElement('div');
-    actions.className = 'card-actions';
-
-    const applyBtn = document.createElement('button');
-    applyBtn.className = 'btn-apply';
-    applyBtn.textContent = '반영';
-    applyBtn.setAttribute('aria-label', `${catName} 수정 반영`);
-    applyBtn.addEventListener('click', () => _handleApply(state, card, issue, index));
-
-    const ignoreBtn = document.createElement('button');
-    ignoreBtn.className = 'btn-ignore';
-    ignoreBtn.textContent = '무시';
-    ignoreBtn.setAttribute('aria-label', `${catName} 수정 무시`);
-    ignoreBtn.addEventListener('click', () => _handleIgnore(state, card, issue, index));
-
-    actions.appendChild(applyBtn);
-    actions.appendChild(ignoreBtn);
-    header.appendChild(actions);
-    card.appendChild(header);
-
-    return card;
+    item.appendChild(detail);
+    return item;
   }
 
-  function _handleApply(state, card, issue, index) {
-    card.classList.add('applied');
-    const actions = card.querySelector('.card-actions');
-    if (actions) {
-      actions.innerHTML = '<span class="card-status-icon">✓</span>';
-    }
-
-    state.resolvedCount++;
-    if (state.callbacks && state.callbacks.onApply) {
-      state.callbacks.onApply(issue, index);
-    }
-
-    chrome.runtime.sendMessage({
-      type: 'logUsageEvent',
-      event: { event_type: 'issue_applied', category: issue.category },
-    });
-
-    setTimeout(() => {
-      card.classList.add('collapsing');
-      setTimeout(() => card.remove(), 200);
-      _updateActionBar(state);
-    }, 500);
-  }
-
-  function _handleIgnore(state, card, issue, index) {
-    card.classList.add('ignored');
-    const actions = card.querySelector('.card-actions');
-    if (actions) {
-      actions.innerHTML = '<span class="card-status-icon" style="opacity:0.4">—</span>';
-    }
-
-    state.resolvedCount++;
-    if (state.callbacks && state.callbacks.onIgnore) {
-      state.callbacks.onIgnore(issue, index);
-    }
-
-    chrome.runtime.sendMessage({
-      type: 'logUsageEvent',
-      event: { event_type: 'issue_ignored', category: issue.category },
-    });
-
-    setTimeout(() => {
-      card.classList.add('collapsing');
-      setTimeout(() => card.remove(), 200);
-      _updateActionBar(state);
-    }, 300);
-  }
-
-  function _createActionBar(state) {
-    const bar = document.createElement('div');
-    bar.className = 'action-bar';
-    bar.id = 'action-bar';
+  function _buildFooter(state, totalIssues) {
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer';
 
     const left = document.createElement('div');
-    left.className = 'action-left';
+    left.className = 'footer-left';
 
-    const applyAllBtn = document.createElement('button');
-    applyAllBtn.className = 'btn-apply-all';
-    applyAllBtn.textContent = '전체 반영하기';
-    applyAllBtn.setAttribute('aria-label', '모든 수정 사항 반영');
-    applyAllBtn.addEventListener('click', () => {
-      if (state.callbacks && state.callbacks.onApplyAll) {
-        state.callbacks.onApplyAll(state.issues);
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'btn-apply-all';
+    applyBtn.textContent = `반영하기 (${totalIssues}건 수정)`;
+    applyBtn.addEventListener('click', () => {
+      if (state.callbacks && state.callbacks.onApplyAll && state.correctedBody) {
+        state.callbacks.onApplyAll(state.correctedBody);
       }
-      const cards = state.panel.querySelectorAll('.issue-card');
-      cards.forEach((c) => {
-        c.classList.add('applied');
-        const a = c.querySelector('.card-actions');
-        if (a) a.innerHTML = '<span class="card-status-icon">✓</span>';
-      });
-      state.resolvedCount = state.totalIssues;
-
       for (const issue of state.issues) {
         chrome.runtime.sendMessage({
           type: 'logUsageEvent',
           event: { event_type: 'issue_applied', category: issue.category },
         });
       }
-
-      setTimeout(() => {
-        cards.forEach(c => { c.classList.add('collapsing'); });
-        setTimeout(() => {
-          cards.forEach(c => c.remove());
-          _updateActionBar(state);
-        }, 200);
-      }, 500);
+      destroy(state);
     });
-    left.appendChild(applyAllBtn);
+    left.appendChild(applyBtn);
 
     const retryBtn = document.createElement('button');
     retryBtn.className = 'btn-retry';
-    retryBtn.textContent = '다시 검토하기';
+    retryBtn.textContent = '다시 검토';
     retryBtn.addEventListener('click', () => {
+      destroy(state);
       if (state.callbacks && state.callbacks.onRetry) state.callbacks.onRetry();
     });
     left.appendChild(retryBtn);
 
-    bar.appendChild(left);
+    footer.appendChild(left);
 
     const status = document.createElement('span');
-    status.className = 'action-status';
-    status.id = 'action-status';
-    status.textContent = `검토 완료 (${state.totalIssues}건)`;
-    bar.appendChild(status);
+    status.className = 'footer-status';
+    status.textContent = `${totalIssues}건 수정`;
+    footer.appendChild(status);
 
-    return bar;
+    return footer;
   }
 
-  function _updateActionBar(state) {
-    const statusEl = state.panel.querySelector('#action-status');
-    if (statusEl) {
-      const remaining = state.panel.querySelectorAll('.issue-card').length;
-      if (remaining === 0) {
-        statusEl.textContent = '모든 항목 처리 완료';
-        const applyAllBtn = state.panel.querySelector('.btn-apply-all');
-        if (applyAllBtn) applyAllBtn.disabled = true;
+  // --- Insight Card ---
+
+  async function _loadInsight(state) {
+    try {
+      const response = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'getTopCategories' }, resolve);
+      });
+
+      if (!response || !response.topCategories || response.topCategories.length === 0) return;
+
+      const totalReviews = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'getReviewHistory' }, (res) => {
+          resolve(res?.history?.length || 0);
+        });
+      });
+
+      if (totalReviews < 5) return;
+
+      const insightText = response.topCategories
+        .map(c => `${CATEGORY_NAMES[c.category] || c.category}(${c.count})`)
+        .join(', ');
+
+      const card = document.createElement('div');
+      card.className = 'insight-card';
+      card.innerHTML = `
+        <span class="insight-icon">💡</span>
+        <span class="insight-text"><strong>자주 하는 실수:</strong> ${insightText}</span>
+      `;
+
+      const body = state.container.querySelector('.modal-body');
+      if (body) body.appendChild(card);
+    } catch (e) {
+      // silently skip insight
+    }
+  }
+
+  // --- Highlight ---
+
+  function _highlightCorrections(bodyText, issues) {
+    let html = _escapeHtml(bodyText);
+    const sortedIssues = [...issues]
+      .filter(i => i.corrected)
+      .sort((a, b) => b.corrected.length - a.corrected.length);
+
+    for (const issue of sortedIssues) {
+      const escaped = _escapeHtml(issue.corrected);
+      const idx = html.indexOf(escaped);
+      if (idx !== -1) {
+        html = html.substring(0, idx)
+          + `<mark class="highlight">${escaped}</mark>`
+          + html.substring(idx + escaped.length);
       }
     }
+    return html;
   }
 
   function _escapeHtml(text) {
@@ -424,9 +451,9 @@ const ReviewPanel = (() => {
   return {
     create,
     destroy,
+    destroyAll,
     showLoading,
     showStreaming,
-    addStreamingIssue,
     showComplete,
     showError,
   };

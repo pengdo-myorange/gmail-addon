@@ -11,7 +11,7 @@
     <h1>이메일 검토 도우미</h1>
     <p class="subtitle">Gmail 발송 전 이메일 오류를 잡아내고 수정해주는 확장기능</p>
 
-    <!-- 온보딩 가이드 (첫 방문 시만 표시) -->
+    <!-- 온보딩 가이드 -->
     <div id="onboarding-guide" class="section onboarding" style="display:none;">
       <h2>시작하기</h2>
       <div class="steps">
@@ -39,7 +39,7 @@
       </div>
     </div>
 
-    <!-- 섹션 1: API 키 설정 -->
+    <!-- API 키 설정 -->
     <div class="section">
       <h2>API 키 설정</h2>
       <div class="input-group">
@@ -52,15 +52,39 @@
       </div>
       <div id="test-result" class="test-result" style="display:none;"></div>
       <p class="help-text">API 키는 <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>에서 발급받을 수 있습니다.</p>
+
+      <!-- 모델 선택 -->
+      <div class="model-select-group">
+        <label for="model-select">LLM 모델</label>
+        <select id="model-select">
+          <option value="gemini-2.0-flash">Gemini 2.0 Flash (빠름, 기본)</option>
+          <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (경량)</option>
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash (고품질)</option>
+        </select>
+        <p class="model-description" id="model-description">빠른 속도와 좋은 품질의 균형 모델입니다.</p>
+      </div>
     </div>
 
-    <!-- 섹션 2: 검토 카테고리 (v1.1) -->
+    <!-- 검토 카테고리 -->
     <div class="section">
-      <h2>검토 카테고리 <span class="badge-future">v1.1에서 지원 예정</span></h2>
+      <h2>검토 카테고리</h2>
       <div class="category-list" id="category-list"></div>
     </div>
 
-    <!-- 섹션 3: 검토 이력 -->
+    <!-- 사용자 규칙 -->
+    <div class="section">
+      <h2>사용자 규칙</h2>
+      <div class="custom-rules-group">
+        <textarea id="custom-rules" placeholder="추가 검토 규칙을 입력하세요.&#10;예: '귀사' 대신 '귀 법인'으로 수정&#10;예: 이메일 끝에 항상 '감사합니다' 포함 확인"></textarea>
+        <div class="custom-rules-actions">
+          <button id="save-rules-btn" class="btn-outlined">규칙 저장</button>
+          <span id="rules-save-feedback" class="save-feedback">저장되었습니다</span>
+        </div>
+        <p class="help-text">줄바꿈으로 규칙을 구분합니다. LLM에게 추가 지시사항으로 전달됩니다.</p>
+      </div>
+    </div>
+
+    <!-- 검토 이력 -->
     <div class="section">
       <h2>검토 이력</h2>
       <div id="history-container">
@@ -68,7 +92,7 @@
       </div>
     </div>
 
-    <!-- 섹션 4: 사용 통계 -->
+    <!-- 사용 통계 -->
     <div class="section">
       <h2>사용 통계</h2>
       <div id="stats-container">

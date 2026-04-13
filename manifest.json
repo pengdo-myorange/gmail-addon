@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "이메일 검토 도우미",
+  "description": "Gmail 발송 전 이메일의 오류를 잡아내고 수정해주는 확장기능",
+  "version": "1.0.0",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": [
+        "selectors.js",
+        "prompts.js",
+        "email-extractor.js",
+        "text-replacer.js",
+        "review-panel.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    },
+    "default_title": "이메일 검토 도우미 설정"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["review-panel.css"],
+      "matches": ["https://mail.google.com/*"]
+    }
+  ]
+}

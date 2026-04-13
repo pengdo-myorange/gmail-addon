@@ -1,0 +1,375 @@
+/**
+ * background.js — Service Worker
+ * Gemini 스트리밍 API, Port 메시지 패싱, 온보딩, 뱃지, 통계/이력
+ */
+
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+const DEFAULT_MODEL = 'gemini-2.0-flash';
+const STORAGE_KEY_USAGE = 'usage_events';
+const STORAGE_KEY_HISTORY = 'review_history';
+const MAX_USAGE_EVENTS = 1000;
+const MAX_HISTORY_ENTRIES = 50;
+
+// --- Onboarding ---
+
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === 'install') {
+    chrome.tabs.create({ url: chrome.runtime.getURL('options.html?onboarding=true') });
+    chrome.action.setBadgeText({ text: '!' });
+    chrome.action.setBadgeBackgroundColor({ color: '#D93025' });
+  }
+});
+
+chrome.action.onClicked.addListener(() => {
+  chrome.runtime.openOptionsPage();
+});
+
+// --- Port-based streaming communication ---
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'review') return;
+
+  port.onMessage.addListener(async (msg) => {
+    if (msg.type === 'startReview') {
+      await handleReview(port, msg.emailBody);
+    } else if (msg.type === 'testApiKey') {
+      await handleTestApiKey(port, msg.apiKey);
+    }
+  });
+});
+
+// --- Simple message listener for non-streaming requests ---
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'getApiKey') {
+    chrome.storage.sync.get(['apiKey'], (result) => {
+      sendResponse({ apiKey: result.apiKey || '' });
+    });
+    return true;
+  }
+
+  if (msg.type === 'saveApiKey') {
+    chrome.storage.sync.set({ apiKey: msg.apiKey }, () => {
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  if (msg.type === 'logUsageEvent') {
+    logUsageEvent(msg.event).then(() => sendResponse({ success: true }));
+    return true;
+  }
+
+  if (msg.type === 'saveReviewHistory') {
+    saveReviewHistory(msg.entry).then(() => sendResponse({ success: true }));
+    return true;
+  }
+
+  if (msg.type === 'getUsageEvents') {
+    chrome.storage.local.get([STORAGE_KEY_USAGE], (result) => {
+      sendResponse({ events: result[STORAGE_KEY_USAGE] || [] });
+    });
+    return true;
+  }
+
+  if (msg.type === 'getReviewHistory') {
+    chrome.storage.local.get([STORAGE_KEY_HISTORY], (result) => {
+      sendResponse({ history: result[STORAGE_KEY_HISTORY] || [] });
+    });
+    return true;
+  }
+
+  if (msg.type === 'clearBadge') {
+    chrome.action.setBadgeText({ text: '' });
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (msg.type === 'selectorFailure') {
+    chrome.action.setBadgeText({ text: '!' });
+    chrome.action.setBadgeBackgroundColor({ color: '#D93025' });
+    sendResponse({ success: true });
+    return true;
+  }
+});
+
+// --- Gemini Streaming Review ---
+
+async function handleReview(port, emailBody) {
+  let apiKey;
+  try {
+    const result = await chrome.storage.sync.get(['apiKey']);
+    apiKey = result.apiKey;
+  } catch (e) {
+    port.postMessage({ type: 'error', code: 'STORAGE_ERROR', message: 'API 키를 읽을 수 없습니다.' });
+    return;
+  }
+
+  if (!apiKey) {
+    port.postMessage({ type: 'error', code: 'NO_API_KEY', message: 'API 키가 설정되지 않았습니다.' });
+    return;
+  }
+
+  await logUsageEvent({ event_type: 'review_started' });
+  port.postMessage({ type: 'status', status: 'loading' });
+
+  const systemPrompt = buildSystemPrompt();
+  const userPrompt = `다음 이메일 본문을 검토해주세요:\n\n${emailBody}`;
+
+  const url = `${GEMINI_API_BASE}/${DEFAULT_MODEL}:streamGenerateContent?key=${apiKey}&alt=sse`;
+  const body = {
+    contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    generationConfig: {
+      responseMimeType: 'application/json',
+      temperature: 0.2,
+    },
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      let code = 'API_ERROR';
+      if (response.status === 429) code = 'RATE_LIMIT';
+      else if (response.status === 401 || response.status === 403) code = 'INVALID_KEY';
+      port.postMessage({ type: 'error', code, message: `API 오류 (${response.status})` });
+      await logUsageEvent({ event_type: 'error', error_code: code });
+      return;
+    }
+
+    port.postMessage({ type: 'status', status: 'streaming' });
+
+    let accumulated = '';
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let lastParsedCount = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split('\n');
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6).trim();
+        if (!jsonStr || jsonStr === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) {
+            accumulated += text;
+            const issues = tryParsePartialIssues(accumulated);
+            if (issues && issues.length > lastParsedCount) {
+              const newIssues = issues.slice(lastParsedCount);
+              for (const issue of newIssues) {
+                port.postMessage({ type: 'issue', issue });
+              }
+              lastParsedCount = issues.length;
+            }
+          }
+        } catch (e) {
+          // partial JSON, continue accumulating
+        }
+      }
+    }
+
+    const finalResult = tryParseFinalResult(accumulated);
+    if (finalResult) {
+      if (finalResult.issues.length > lastParsedCount) {
+        const remaining = finalResult.issues.slice(lastParsedCount);
+        for (const issue of remaining) {
+          port.postMessage({ type: 'issue', issue });
+        }
+      }
+      port.postMessage({ type: 'complete', totalIssues: finalResult.issues.length });
+
+      await saveReviewHistory({
+        timestamp: Date.now(),
+        total_issues: finalResult.issues.length,
+        categories: summarizeCategories(finalResult.issues),
+        applied_count: 0,
+        ignored_count: 0,
+      });
+      await logUsageEvent({ event_type: 'review_completed' });
+
+      chrome.action.setBadgeText({ text: '' });
+    } else {
+      port.postMessage({ type: 'error', code: 'PARSE_ERROR', message: '검토 결과를 해석할 수 없습니다.' });
+      await logUsageEvent({ event_type: 'error', error_code: 'PARSE_ERROR' });
+    }
+
+  } catch (e) {
+    if (e.name === 'TypeError' && e.message.includes('Failed to fetch')) {
+      port.postMessage({ type: 'error', code: 'NETWORK_ERROR', message: '네트워크 연결을 확인해주세요.' });
+    } else {
+      port.postMessage({ type: 'error', code: 'UNKNOWN', message: '알 수 없는 오류가 발생했습니다.' });
+    }
+    await logUsageEvent({ event_type: 'error', error_code: 'NETWORK_ERROR' });
+  }
+}
+
+// --- API Key Test ---
+
+async function handleTestApiKey(port, apiKey) {
+  const url = `${GEMINI_API_BASE}/${DEFAULT_MODEL}:generateContent?key=${apiKey}`;
+  const body = {
+    contents: [{ role: 'user', parts: [{ text: '안녕' }] }],
+    generationConfig: { maxOutputTokens: 10 },
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (response.ok) {
+      port.postMessage({ type: 'testResult', success: true });
+    } else {
+      port.postMessage({ type: 'testResult', success: false, status: response.status });
+    }
+  } catch (e) {
+    port.postMessage({ type: 'testResult', success: false, error: 'network' });
+  }
+}
+
+// --- Parsing helpers ---
+
+function buildSystemPrompt() {
+  return `당신은 한국어 비즈니스 이메일 전문 검토자입니다.
+사용자가 제출한 이메일 본문을 분석하여, 아래 9개 카테고리에 해당하는 오류를 찾아 수정안을 제시하세요.
+
+## 오류 카테고리
+1. recipient_title (수신자 호칭 오류): 받는 사람 이름/직책을 잘못 표기
+2. duplicate (중복 표현): 동일 인사말/맺음말 반복 (예: "감사합니다" 두 번)
+3. spacing (띄어쓰기 오류): 한국어 조사/어미 띄어쓰기 (예: "변경사항은" → "변경 사항은")
+4. typo (오타/맞춤법): 단순 입력 실수, 맞춤법 오류
+5. honorific (경어체 불일치): 문장 내/간 존칭 수준 혼용 (예: "~합니다"와 "~해요" 혼재)
+6. missing (누락 요소): 인사말, 서명, 맺음말 빠짐
+7. awkward (어색한 표현): 문법적으로 맞지만 자연스럽지 않은 문장
+8. particle (조사 오류): 잘못된 조사 사용 (예: "측정을 변경사항" → "측정에 변경사항")
+9. paragraph (문단 구분 오류): 호칭 뒤 줄바꿈 누락, 문단 없는 장문, 서명 전 줄바꿈 누락
+
+## 문단 구분 규칙
+- 호칭(예: "OOO 님께,") 뒤에는 빈 줄
+- 본문 문단 사이에는 빈 줄
+- 맺음말/서명 앞에는 빈 줄
+
+## 출력 규칙
+- 반드시 JSON 형식으로 응답하세요.
+- 오류가 없으면 빈 배열을 반환하세요: {"issues": []}
+- original 필드: 문제가 되는 원문 텍스트 (문맥 파악 가능한 최소 범위)
+- corrected 필드: 수정된 텍스트
+- explanation 필드: 왜 수정이 필요한지 한국어로 간결하게 설명
+- 작성자의 문체와 어투를 최대한 유지하세요.
+- 확실한 오류만 지적하세요. 스타일 선호도 차이는 지적하지 마세요.
+- 오탐(false positive)을 최소화하세요.
+
+## 응답 형식
+\`\`\`json
+{
+  "issues": [
+    {
+      "category": "카테고리_id",
+      "original": "문제 원문",
+      "corrected": "수정안",
+      "explanation": "수정 이유"
+    }
+  ]
+}
+\`\`\``;
+}
+
+function tryParsePartialIssues(text) {
+  try {
+    const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    if (parsed && Array.isArray(parsed.issues)) {
+      return parsed.issues;
+    }
+  } catch (e) {
+    // try to extract partial array
+    try {
+      const match = text.match(/"issues"\s*:\s*\[/);
+      if (match) {
+        const startIdx = text.indexOf('[', match.index);
+        let bracketCount = 0;
+        let lastCompleteItem = -1;
+        for (let i = startIdx; i < text.length; i++) {
+          if (text[i] === '{') bracketCount++;
+          else if (text[i] === '}') {
+            bracketCount--;
+            if (bracketCount === 0) lastCompleteItem = i;
+          }
+        }
+        if (lastCompleteItem > startIdx) {
+          const partial = text.substring(startIdx, lastCompleteItem + 1) + ']';
+          const arr = JSON.parse(partial);
+          return arr;
+        }
+      }
+    } catch (e2) {
+      // not parseable yet
+    }
+  }
+  return null;
+}
+
+function tryParseFinalResult(text) {
+  try {
+    const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    if (parsed && Array.isArray(parsed.issues)) return parsed;
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
+function summarizeCategories(issues) {
+  const counts = {};
+  for (const issue of issues) {
+    counts[issue.category] = (counts[issue.category] || 0) + 1;
+  }
+  return Object.entries(counts).map(([name, count]) => ({ name, count }));
+}
+
+// --- Usage stats & review history ---
+
+async function logUsageEvent(event) {
+  try {
+    const result = await chrome.storage.local.get([STORAGE_KEY_USAGE]);
+    const events = result[STORAGE_KEY_USAGE] || [];
+    events.push({ ...event, timestamp: Date.now() });
+    if (events.length > MAX_USAGE_EVENTS) {
+      events.splice(0, events.length - MAX_USAGE_EVENTS);
+    }
+    await chrome.storage.local.set({ [STORAGE_KEY_USAGE]: events });
+  } catch (e) {
+    console.error('Failed to log usage event:', e);
+  }
+}
+
+async function saveReviewHistory(entry) {
+  try {
+    const result = await chrome.storage.local.get([STORAGE_KEY_HISTORY]);
+    const history = result[STORAGE_KEY_HISTORY] || [];
+    history.push(entry);
+    if (history.length > MAX_HISTORY_ENTRIES) {
+      history.splice(0, history.length - MAX_HISTORY_ENTRIES);
+    }
+    await chrome.storage.local.set({ [STORAGE_KEY_HISTORY]: history });
+  } catch (e) {
+    console.error('Failed to save review history:', e);
+  }
+}

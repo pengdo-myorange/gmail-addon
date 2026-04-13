@@ -9,8 +9,6 @@ const CATEGORIES = [
   { id: 'spacing', name: '띄어쓰기 오류' },
   { id: 'typo', name: '오타/맞춤법' },
   { id: 'honorific', name: '경어체 불일치' },
-  { id: 'missing', name: '누락 요소' },
-  { id: 'awkward', name: '어색한 표현' },
   { id: 'particle', name: '조사 오류' },
   { id: 'paragraph', name: '문단 구분 오류' },
 ];

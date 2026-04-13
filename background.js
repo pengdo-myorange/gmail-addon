@@ -13,19 +13,17 @@ const MAX_HISTORY_ENTRIES = 50;
 
 const ALL_CATEGORY_IDS = [
   'recipient_title', 'duplicate', 'spacing', 'typo',
-  'honorific', 'missing', 'awkward', 'particle', 'paragraph',
+  'honorific', 'particle', 'paragraph',
 ];
 
 const CATEGORY_DESCRIPTIONS = {
-  recipient_title: '수신자 호칭 오류: 받는 사람 이름/직책 잘못 표기. 수신자 정보나 원본 메일 컨텍스트가 제공되면 본문의 호칭과 대조하여 불일치를 검출',
+  recipient_title: '수신자 호칭 오류: 받는 사람 이름/직책 잘못 표기',
   duplicate: '중복 표현: 동일 인사말/맺음말 반복',
-  spacing: '띄어쓰기 오류: 한국어 조사/어미 띄어쓰기',
+  spacing: '띄어쓰기 오류: 명백한 띄어쓰기 오류만 지적',
   typo: '오타/맞춤법: 단순 입력 실수, 맞춤법 오류',
   honorific: '경어체 불일치: 문장 내/간 존칭 수준 혼용',
-  missing: '누락 요소: 인사말, 서명, 맺음말 빠짐',
-  awkward: '어색한 표현: 문법적으로 맞지만 자연스럽지 않은 문장',
   particle: '조사 오류: 잘못된 조사 사용',
-  paragraph: '문단 구분 오류: 호칭 뒤 줄바꿈 누락, 문단 없는 장문, 서명 전 줄바꿈 누락, 연속 빈 줄(2줄 이상) 과다, 문장마다 불필요한 줄바꿈',
+  paragraph: '문단 구분 오류: 연속 빈 줄(2줄 이상) 과다',
 };
 
 // --- Onboarding ---

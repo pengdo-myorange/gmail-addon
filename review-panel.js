@@ -21,8 +21,6 @@ const ReviewPanel = (() => {
     spacing: '띄어쓰기',
     typo: '오타/맞춤법',
     honorific: '경어체',
-    missing: '누락 요소',
-    awkward: '어색한 표현',
     particle: '조사 오류',
     paragraph: '문단 구분',
   };
@@ -222,8 +220,6 @@ const ReviewPanel = (() => {
 
     state.container.appendChild(body);
 
-    _loadInsight(state);
-
     const footer = _buildFooter(state, totalIssues);
     state.container.appendChild(footer);
   }
@@ -391,10 +387,20 @@ const ReviewPanel = (() => {
     const detail = document.createElement('div');
     detail.className = 'change-detail';
 
-    const textLine = document.createElement('div');
-    textLine.className = 'change-text';
-    textLine.innerHTML = `${_escapeHtmlWithBreaks(issue.original)}<span class="arrow">&rarr;</span>${_escapeHtmlWithBreaks(issue.corrected)}`;
-    detail.appendChild(textLine);
+    const originalLine = document.createElement('div');
+    originalLine.className = 'change-original';
+    originalLine.innerHTML = _escapeHtmlWithBreaks(issue.original);
+    detail.appendChild(originalLine);
+
+    const arrowLine = document.createElement('div');
+    arrowLine.className = 'change-arrow';
+    arrowLine.innerHTML = '&darr;';
+    detail.appendChild(arrowLine);
+
+    const correctedLine = document.createElement('div');
+    correctedLine.className = 'change-corrected';
+    correctedLine.innerHTML = _escapeHtmlWithBreaks(issue.corrected);
+    detail.appendChild(correctedLine);
 
     if (issue.explanation) {
       const explanation = document.createElement('div');
@@ -481,46 +487,6 @@ const ReviewPanel = (() => {
   }
 
   // --- Insight Card ---
-
-  async function _loadInsight(state) {
-    if (!_isContextValid()) return;
-    try {
-      const response = await new Promise((resolve) => {
-        if (!_isContextValid()) return resolve(null);
-        try { chrome.runtime.sendMessage({ type: 'getTopCategories' }, resolve); }
-        catch { resolve(null); }
-      });
-
-      if (!response || !response.topCategories || response.topCategories.length === 0) return;
-
-      const totalReviews = await new Promise((resolve) => {
-        if (!_isContextValid()) return resolve(0);
-        try {
-          chrome.runtime.sendMessage({ type: 'getReviewHistory' }, (res) => {
-            resolve(res?.history?.length || 0);
-          });
-        } catch { resolve(0); }
-      });
-
-      if (totalReviews < 5) return;
-
-      const insightText = response.topCategories
-        .map(c => `${CATEGORY_NAMES[c.category] || c.category}(${c.count})`)
-        .join(', ');
-
-      const card = document.createElement('div');
-      card.className = 'insight-card';
-      card.innerHTML = `
-        <span class="insight-icon">💡</span>
-        <span class="insight-text"><strong>자주 하는 실수:</strong> ${insightText}</span>
-      `;
-
-      const body = state.container.querySelector('.modal-body');
-      if (body) body.appendChild(card);
-    } catch (e) {
-      // silently skip insight
-    }
-  }
 
   // --- Highlight ---
 

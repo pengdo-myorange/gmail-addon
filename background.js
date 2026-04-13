@@ -5,7 +5,7 @@
  */
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_MODEL = 'gemini-2.0-flash';
+const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 const STORAGE_KEY_USAGE = 'usage_events';
 const STORAGE_KEY_HISTORY = 'review_history';
 const MAX_USAGE_EVENTS = 1000;

@@ -7,6 +7,14 @@
 const ReviewPanel = (() => {
   const MODAL_ATTR = 'data-email-review-modal';
 
+  function _isContextValid() {
+    try {
+      return !!chrome.runtime?.id;
+    } catch (e) {
+      return false;
+    }
+  }
+
   const CATEGORY_NAMES = {
     recipient_title: '수신자 호칭',
     duplicate: '중복 표현',
@@ -20,6 +28,7 @@ const ReviewPanel = (() => {
   };
 
   function create(callbacks) {
+    if (!_isContextValid()) return null;
     destroyAll();
 
     const host = document.createElement('div');
@@ -34,7 +43,13 @@ const ReviewPanel = (() => {
 
     const shadow = host.attachShadow({ mode: 'open' });
 
-    const cssUrl = chrome.runtime.getURL('review-panel.css');
+    let cssUrl;
+    try {
+      cssUrl = chrome.runtime.getURL('review-panel.css');
+    } catch (e) {
+      host.remove();
+      return null;
+    }
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = cssUrl;
@@ -91,6 +106,7 @@ const ReviewPanel = (() => {
   // --- State Screens ---
 
   function showLoading(state) {
+    if (!state?.container) return;
     state.container.innerHTML = '';
 
     const header = _buildHeader('검토 중...', state);
@@ -112,6 +128,7 @@ const ReviewPanel = (() => {
   }
 
   function showStreaming(state, count) {
+    if (!state?.container) return;
     state.streamingCount = count || state.streamingCount;
     const titleEl = state.container.querySelector('.modal-title');
     if (titleEl) {
@@ -120,6 +137,7 @@ const ReviewPanel = (() => {
   }
 
   function showComplete(state, correctedBody, issues, totalIssues) {
+    if (!state?.container) return;
     state.correctedBody = correctedBody;
     state.issues = issues || [];
     state.container.innerHTML = '';
@@ -184,6 +202,7 @@ const ReviewPanel = (() => {
   }
 
   function showError(state, code, message) {
+    if (!state?.container) return;
     state.container.innerHTML = '';
 
     const header = _buildHeader('오류', state);
@@ -211,6 +230,11 @@ const ReviewPanel = (() => {
         <div class="state-icon">🇰🇷</div>
         <div class="state-message">${_escapeHtml(message)}</div>
       `;
+    } else if (code === 'CONTEXT_INVALID') {
+      screen.innerHTML = `
+        <div class="state-icon">🔄</div>
+        <div class="state-message">${_escapeHtml(message)}</div>
+      `;
     } else {
       screen.innerHTML = `
         <div class="state-icon">⚠️</div>
@@ -226,7 +250,7 @@ const ReviewPanel = (() => {
     const left = document.createElement('div');
     left.className = 'footer-left';
 
-    if (code !== 'NO_API_KEY' && code !== 'EMPTY' && code !== 'NOT_KOREAN') {
+    if (code !== 'NO_API_KEY' && code !== 'EMPTY' && code !== 'NOT_KOREAN' && code !== 'CONTEXT_INVALID') {
       const retryBtn = document.createElement('button');
       retryBtn.className = 'btn-retry';
       retryBtn.textContent = '다시 시도';
@@ -250,7 +274,7 @@ const ReviewPanel = (() => {
     if (settingsLink) {
       settingsLink.addEventListener('click', (e) => {
         e.preventDefault();
-        chrome.runtime.openOptionsPage?.();
+        if (_isContextValid()) chrome.runtime.openOptionsPage?.();
         destroy(state);
       });
     }
@@ -357,11 +381,13 @@ const ReviewPanel = (() => {
       if (state.callbacks && state.callbacks.onApplyAll && state.correctedBody) {
         state.callbacks.onApplyAll(state.correctedBody);
       }
-      for (const issue of state.issues) {
-        chrome.runtime.sendMessage({
-          type: 'logUsageEvent',
-          event: { event_type: 'issue_applied', category: issue.category },
-        });
+      if (_isContextValid()) {
+        for (const issue of state.issues) {
+          chrome.runtime.sendMessage({
+            type: 'logUsageEvent',
+            event: { event_type: 'issue_applied', category: issue.category },
+          });
+        }
       }
       destroy(state);
     });
@@ -389,6 +415,7 @@ const ReviewPanel = (() => {
   // --- Insight Card ---
 
   async function _loadInsight(state) {
+    if (!_isContextValid()) return;
     try {
       const response = await new Promise((resolve) => {
         chrome.runtime.sendMessage({ type: 'getTopCategories' }, resolve);

@@ -13,9 +13,18 @@
   const processedBodies = new WeakSet();
 
   let debounceTimer = null;
+  let pollTimer = null;
+
+  function _isContextValid() {
+    try {
+      return !!chrome.runtime?.id;
+    } catch (e) {
+      return false;
+    }
+  }
 
   function init() {
-    console.log('[이메일 검토 도우미] 초기화 시작');
+    console.log('[보내기 전에] 초기화 시작');
     observeDOM();
     scanForComposeWindows();
     startPolling();
@@ -23,6 +32,10 @@
 
   function observeDOM() {
     const observer = new MutationObserver(() => {
+      if (!_isContextValid()) {
+        observer.disconnect();
+        return;
+      }
       if (debounceTimer) return;
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
@@ -37,7 +50,12 @@
   }
 
   function startPolling() {
-    setInterval(() => {
+    pollTimer = setInterval(() => {
+      if (!_isContextValid()) {
+        clearInterval(pollTimer);
+        console.log('[보내기 전에] 확장기능 컨텍스트 무효화 — 폴링 중지');
+        return;
+      }
       scanForComposeWindows();
     }, POLL_INTERVAL_MS);
   }
@@ -61,7 +79,7 @@
 
       processedBodies.add(body);
       injectReviewButton(container, sendBtn);
-      console.log('[이메일 검토 도우미] 검토하기 버튼 주입 완료');
+      console.log('[보내기 전에] 검토하기 버튼 주입 완료');
     }
   }
 
@@ -137,7 +155,7 @@
   function startReview(composeContainer) {
     const composeBody = GmailSelectors.findComposeBody(composeContainer);
     if (!composeBody) {
-      console.warn('[이메일 검토 도우미] 작성 본문을 찾을 수 없습니다.');
+      console.warn('[보내기 전에] 작성 본문을 찾을 수 없습니다.');
       return;
     }
 
@@ -151,6 +169,10 @@
     };
 
     const panelState = ReviewPanel.create(panelCallbacks);
+    if (!panelState) {
+      console.warn('[보내기 전에] 확장기능 컨텍스트가 무효화되었습니다. 페이지를 새로고침해주세요.');
+      return;
+    }
     composeStates.set(composeContainer, { panelState, composeBody });
 
     if (!emailText || emailText.trim().length === 0) {
@@ -165,7 +187,18 @@
 
     ReviewPanel.showLoading(panelState);
 
-    const port = chrome.runtime.connect({ name: 'review' });
+    if (!_isContextValid()) {
+      ReviewPanel.showError(panelState, 'CONTEXT_INVALID', '확장기능이 업데이트되었습니다. 페이지를 새로고침해주세요.');
+      return;
+    }
+
+    let port;
+    try {
+      port = chrome.runtime.connect({ name: 'review' });
+    } catch (e) {
+      ReviewPanel.showError(panelState, 'CONTEXT_INVALID', '확장기능이 업데이트되었습니다. 페이지를 새로고침해주세요.');
+      return;
+    }
 
     port.onMessage.addListener((msg) => {
       switch (msg.type) {
@@ -195,8 +228,13 @@
     });
 
     port.onDisconnect.addListener(() => {
-      if (chrome.runtime.lastError) {
-        ReviewPanel.showError(panelState, 'DISCONNECT', '연결이 끊어졌습니다. 다시 시도해주세요.');
+      const err = chrome.runtime.lastError;
+      if (err) {
+        const msg = !_isContextValid()
+          ? '확장기능이 업데이트되었습니다. 페이지를 새로고침해주세요.'
+          : '연결이 끊어졌습니다. 다시 시도해주세요.';
+        const code = !_isContextValid() ? 'CONTEXT_INVALID' : 'DISCONNECT';
+        ReviewPanel.showError(panelState, code, msg);
       }
     });
 

@@ -16,9 +16,9 @@ const CATEGORIES = [
 ];
 
 const MODEL_DESCRIPTIONS = {
-  'gemini-2.0-flash': '빠른 속도와 좋은 품질의 균형 모델입니다.',
-  'gemini-2.0-flash-lite': '가장 빠르고 경량화된 모델입니다. 간단한 검토에 적합합니다.',
-  'gemini-2.5-flash': '가장 높은 품질의 모델입니다. 복잡한 이메일 검토에 적합합니다.',
+  'gemini-3.0-flash': '빠른 속도와 좋은 품질의 균형 모델입니다.',
+  'gemini-3.1-flash-lite': '가장 빠르고 경량화된 모델입니다. 간단한 검토에 적합합니다.',
+  'gemini-3.0-pro': '가장 높은 품질의 모델입니다. 복잡한 이메일 검토에 적합합니다.',
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -57,7 +57,7 @@ function initApiKey() {
 
   toggleBtn.addEventListener('click', () => {
     input.type = input.type === 'password' ? 'text' : 'password';
-    toggleBtn.textContent = input.type === 'password' ? '👁' : '🔒';
+    toggleBtn.textContent = input.type === 'password' ? '보기' : '숨기기';
   });
 
   saveBtn.addEventListener('click', () => {

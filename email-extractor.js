@@ -25,7 +25,7 @@ const EmailExtractor = (() => {
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         const tag = child.tagName.toLowerCase();
 
-        if (skipQuote && _isQuotedBlock(child)) continue;
+        if (skipQuote && (_isQuotedBlock(child) || _isSignatureBlock(child))) continue;
 
         if (tag === 'br') {
           text += '\n';
@@ -52,6 +52,20 @@ const EmailExtractor = (() => {
     if (el.tagName === 'BLOCKQUOTE') return true;
     for (const sel of QUOTE_SELECTORS) {
       if (el.matches && el.matches(sel)) return true;
+    }
+    return false;
+  }
+
+  const SIGNATURE_SELECTORS = [
+    'div[data-smartmail="gmail_signature"]',
+    'div.gmail_signature',
+    'div.gmail_signature_prefix',
+  ];
+
+  function _isSignatureBlock(el) {
+    if (!el.matches) return false;
+    for (const sel of SIGNATURE_SELECTORS) {
+      if (el.matches(sel)) return true;
     }
     return false;
   }

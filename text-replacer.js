@@ -152,25 +152,60 @@ const TextReplacer = (() => {
     element.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  const PRESERVE_SELECTORS = [
+    'div[data-smartmail="gmail_signature"]',
+    'div.gmail_signature',
+    'div.gmail_signature_prefix',
+    '.gmail_quote',
+    'blockquote[class*="gmail"]',
+    'div.gmail_quote',
+  ];
+
   function replaceEntireBody(composeBody, newText) {
     if (!composeBody || !newText) return false;
 
-    composeBody.focus();
-
-    try {
-      document.execCommand('selectAll');
-      const success = document.execCommand('insertText', false, newText);
-      if (success) return true;
-    } catch (e) {
-      // execCommand failed
+    const preserved = [];
+    for (const sel of PRESERVE_SELECTORS) {
+      composeBody.querySelectorAll(sel).forEach(el => {
+        const placeholder = document.createComment('preserve-' + preserved.length);
+        preserved.push({ placeholder, element: el.cloneNode(true) });
+        el.replaceWith(placeholder);
+      });
     }
+
+    composeBody.focus();
 
     const htmlContent = newText
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/\n/g, '<br>');
-    composeBody.innerHTML = htmlContent;
+
+    try {
+      document.execCommand('selectAll');
+      const success = document.execCommand('insertText', false, newText);
+      if (!success) {
+        composeBody.innerHTML = htmlContent;
+      }
+    } catch (e) {
+      composeBody.innerHTML = htmlContent;
+    }
+
+    for (const { placeholder, element } of preserved) {
+      const walker = document.createTreeWalker(composeBody, NodeFilter.SHOW_COMMENT);
+      let found = false;
+      while (walker.nextNode()) {
+        if (walker.currentNode === placeholder) {
+          placeholder.replaceWith(element);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        composeBody.appendChild(element);
+      }
+    }
+
     _dispatchInputEvent(composeBody);
     return true;
   }

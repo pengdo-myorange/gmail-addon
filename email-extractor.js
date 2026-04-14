@@ -149,10 +149,7 @@ const EmailExtractor = (() => {
 
   function isKorean(text) {
     if (!text) return false;
-    const koreanChars = (text.match(/[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/g) || []).length;
-    const totalChars = text.replace(/\s/g, '').length;
-    if (totalChars === 0) return false;
-    return (koreanChars / totalChars) >= 0.3;
+    return /[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/.test(text);
   }
 
   function getCharCount(text) {

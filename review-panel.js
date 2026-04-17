@@ -149,6 +149,7 @@ const ReviewPanel = (() => {
     }
     state.issues = rawIssues;
     state.issueChecked = new Array(state.issues.length).fill(true);
+    state.issueApplied = new Array(state.issues.length).fill(false);
     state.container.innerHTML = '';
 
     if (totalIssues === 0 || state.issues.length === 0) {
@@ -159,6 +160,15 @@ const ReviewPanel = (() => {
     const header = _buildHeader(`검토 완료 — ${totalIssues}건의 수정 제안`, state);
     state.container.appendChild(header);
 
+    // 안전 뱃지: 서식/서명/링크 보존 명시
+    const safetyBadge = document.createElement('div');
+    safetyBadge.className = 'safety-badge';
+    safetyBadge.innerHTML = `
+      <span class="safety-badge-icon" aria-hidden="true">🔒</span>
+      <span class="safety-badge-text">서명 · 인용 · 링크 · 글꼴 · 색상은 그대로 유지됩니다</span>
+    `;
+    state.container.appendChild(safetyBadge);
+
     const body = document.createElement('div');
     body.className = 'modal-body';
 
@@ -168,13 +178,18 @@ const ReviewPanel = (() => {
 
       const label = document.createElement('div');
       label.className = 'section-label';
-      label.textContent = '수정된 이메일';
+      label.textContent = '수정된 이메일 (변경된 부분 표시)';
       correctedSection.appendChild(label);
 
       const card = document.createElement('div');
       card.className = 'corrected-body-card';
       card.innerHTML = _highlightCorrections(correctedBody, issues);
       correctedSection.appendChild(card);
+
+      const sigNotice = document.createElement('div');
+      sigNotice.className = 'signature-notice';
+      sigNotice.textContent = '— 서명·인용부는 검토 대상에서 제외되어 그대로 유지됩니다 —';
+      correctedSection.appendChild(sigNotice);
 
       body.appendChild(correctedSection);
     }
@@ -202,9 +217,17 @@ const ReviewPanel = (() => {
     selectAllCb.className = 'change-checkbox';
     selectAllCb.addEventListener('change', () => {
       const checked = selectAllCb.checked;
-      state.issueChecked = state.issueChecked.map(() => checked);
-      const cbs = changesList.querySelectorAll('.change-checkbox');
-      cbs.forEach(cb => { cb.checked = checked; });
+      // 이미 반영된 항목은 건드리지 않음
+      state.issueChecked = state.issueChecked.map((_, i) =>
+        state.issueApplied[i] ? false : checked
+      );
+      const items = changesList.querySelectorAll('.change-item');
+      items.forEach(it => {
+        const idx = Number(it.dataset.index);
+        if (state.issueApplied[idx]) return;
+        const cb = it.querySelector('.change-checkbox');
+        if (cb) cb.checked = checked;
+      });
       _updateSelectionUI(state);
     });
     const selectAllText = document.createElement('span');
@@ -366,6 +389,7 @@ const ReviewPanel = (() => {
   function _buildChangeItem(issue, index, state, selectAllCb) {
     const item = document.createElement('li');
     item.className = 'change-item';
+    item.dataset.index = String(index);
 
     const cb = document.createElement('input');
     cb.type = 'checkbox';
@@ -374,7 +398,11 @@ const ReviewPanel = (() => {
     cb.addEventListener('change', () => {
       state.issueChecked[index] = cb.checked;
       if (selectAllCb) {
-        selectAllCb.checked = state.issueChecked.every(Boolean);
+        const unappliedIndexes = state.issueApplied
+          .map((applied, i) => applied ? null : i)
+          .filter(i => i !== null);
+        selectAllCb.checked = unappliedIndexes.length > 0
+          && unappliedIndexes.every(i => state.issueChecked[i]);
       }
       _updateSelectionUI(state);
     });
@@ -418,25 +446,79 @@ const ReviewPanel = (() => {
     }
 
     item.appendChild(detail);
+
+    // 개별 반영 버튼 — 한 번에 하나씩 안전하게 적용
+    const applyOneBtn = document.createElement('button');
+    applyOneBtn.className = 'btn-apply-one';
+    applyOneBtn.type = 'button';
+    applyOneBtn.innerHTML = '<span class="btn-apply-one-label">이것만 반영</span>';
+    applyOneBtn.setAttribute('aria-label', `이 항목만 반영하기: ${issue.category || ''}`);
+    applyOneBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (state.issueApplied[index]) return;
+      if (!state.callbacks?.onApplySingle) return;
+
+      const ok = state.callbacks.onApplySingle(issue);
+      if (ok) {
+        state.issueApplied[index] = true;
+        state.issueChecked[index] = false;
+        _markItemApplied(item, cb, applyOneBtn);
+        if (selectAllCb) {
+          const unappliedIndexes = state.issueApplied
+            .map((applied, i) => applied ? null : i)
+            .filter(i => i !== null);
+          selectAllCb.checked = unappliedIndexes.length > 0
+            && unappliedIndexes.every(i => state.issueChecked[i]);
+        }
+        _updateSelectionUI(state);
+      }
+    });
+    item.appendChild(applyOneBtn);
+
     return item;
   }
 
+  function _markItemApplied(item, cb, applyOneBtn) {
+    item.classList.add('change-item--applied');
+    cb.checked = false;
+    cb.disabled = true;
+    if (applyOneBtn) {
+      applyOneBtn.disabled = true;
+      applyOneBtn.innerHTML = '<span class="btn-apply-one-label">✓ 반영됨</span>';
+    }
+  }
+
   function _updateSelectionUI(state) {
-    const selectedCount = state.issueChecked.filter(Boolean).length;
+    const applied = state.issueApplied || [];
+    const selectedCount = state.issueChecked.filter((v, i) => v && !applied[i]).length;
+    const remainingCount = state.issues.length - applied.filter(Boolean).length;
+    const appliedCount = applied.filter(Boolean).length;
+
     const applyBtn = state.container.querySelector('.btn-apply-all');
     const statusEl = state.container.querySelector('.footer-status');
     if (applyBtn) {
-      applyBtn.textContent = `반영하기 (${selectedCount}건 수정)`;
-      applyBtn.disabled = selectedCount === 0;
+      if (remainingCount === 0) {
+        applyBtn.textContent = '완료 — 닫기';
+        applyBtn.disabled = false;
+        applyBtn.dataset.mode = 'close';
+      } else {
+        applyBtn.textContent = `반영하기 (${selectedCount}건 수정)`;
+        applyBtn.disabled = selectedCount === 0;
+        applyBtn.dataset.mode = 'apply';
+      }
     }
     if (statusEl) {
-      statusEl.textContent = `${selectedCount}/${state.issues.length}건 선택`;
+      if (appliedCount > 0) {
+        statusEl.textContent = `${selectedCount}건 선택 · ${appliedCount}건 반영됨`;
+      } else {
+        statusEl.textContent = `${selectedCount}/${state.issues.length}건 선택`;
+      }
     }
 
     const correctedCard = state.container.querySelector('.corrected-body-card');
     if (correctedCard && state.correctedBody) {
-      const selectedIssues = state.issues.filter((_, i) => state.issueChecked[i]);
-      correctedCard.innerHTML = _highlightCorrections(state.correctedBody, selectedIssues);
+      const visibleIssues = state.issues.filter((_, i) => state.issueChecked[i] && !applied[i]);
+      correctedCard.innerHTML = _highlightCorrections(state.correctedBody, visibleIssues);
     }
   }
 
@@ -449,15 +531,18 @@ const ReviewPanel = (() => {
 
     const applyBtn = document.createElement('button');
     applyBtn.className = 'btn-apply-all';
+    applyBtn.dataset.mode = 'apply';
     applyBtn.textContent = `반영하기 (${totalIssues}건 수정)`;
     applyBtn.addEventListener('click', () => {
-      const selectedIssues = state.issues.filter((_, i) => state.issueChecked[i]);
+      if (applyBtn.dataset.mode === 'close') { destroy(state); return; }
+
+      const selectedIssues = state.issues.filter((_, i) =>
+        state.issueChecked[i] && !state.issueApplied[i]
+      );
       if (selectedIssues.length === 0) { destroy(state); return; }
 
-      const allSelected = state.issueChecked.every(Boolean);
-      if (allSelected && state.callbacks?.onApplyAll && state.correctedBody) {
-        state.callbacks.onApplyAll(state.correctedBody);
-      } else if (state.callbacks?.onApplySelected) {
+      // 항상 per-issue 적용 경로만 사용 → 굵기/색상/글꼴/링크/서명 서식 보존
+      if (state.callbacks?.onApplySelected) {
         state.callbacks.onApplySelected(selectedIssues);
       }
 
@@ -486,10 +571,15 @@ const ReviewPanel = (() => {
 
     footer.appendChild(left);
 
+    const right = document.createElement('div');
+    right.className = 'footer-right';
+
     const status = document.createElement('span');
     status.className = 'footer-status';
     status.textContent = `${totalIssues}/${state.issues.length}건 선택`;
-    footer.appendChild(status);
+    right.appendChild(status);
+
+    footer.appendChild(right);
 
     return footer;
   }
@@ -499,21 +589,48 @@ const ReviewPanel = (() => {
   // --- Highlight ---
 
   function _highlightCorrections(bodyText, issues) {
-    let html = _escapeHtml(bodyText);
+    // 토큰 기반 치환: 원래 위치에 diff 마커를 끼워 넣기 위해
+    // 고유 sentinel로 일단 치환 후 한 번에 HTML로 복원한다.
+    let working = bodyText;
     const sortedIssues = [...issues]
       .filter(i => i.corrected)
       .sort((a, b) => b.corrected.length - a.corrected.length);
 
-    for (const issue of sortedIssues) {
-      const escaped = _escapeHtml(issue.corrected);
-      const idx = html.indexOf(escaped);
-      if (idx !== -1) {
-        html = html.substring(0, idx)
-          + `<mark class="highlight">${escaped}</mark>`
-          + html.substring(idx + escaped.length);
-      }
+    const replacements = [];
+    for (let i = 0; i < sortedIssues.length; i++) {
+      const issue = sortedIssues[i];
+      const idx = working.indexOf(issue.corrected);
+      if (idx === -1) continue;
+      // Private Use Area 문자로 sentinel 구성 (일반 텍스트에 거의 안 나타나고 HTML escape 대상 아님)
+      const sentinel = `\uE000DIFF${i}\uE001`;
+      working = working.substring(0, idx)
+        + sentinel
+        + working.substring(idx + issue.corrected.length);
+      replacements.push({ sentinel, issue });
+    }
+
+    let html = _escapeHtml(working);
+    for (const { sentinel, issue } of replacements) {
+      const originalEsc = _escapeHtml(issue.original || '').replace(/\n/g, '⏎');
+      const correctedEsc = _escapeHtml(issue.corrected);
+      const titleEsc = _escapeHtmlAttr(`이전: ${issue.original || ''}`);
+      const diffHtml = `<span class="diff-group" title="${titleEsc}">`
+        + `<del class="diff-del">${originalEsc}</del>`
+        + `<mark class="highlight diff-ins">${correctedEsc}</mark>`
+        + `</span>`;
+      html = html.replace(sentinel, diffHtml);
     }
     return html;
+  }
+
+  function _escapeHtmlAttr(text) {
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, ' ');
   }
 
   function _escapeHtml(text) {

@@ -1,7 +1,7 @@
 /**
  * content.js — 오케스트레이터
  * MutationObserver, [검토하기] 버튼 주입, WeakMap 상태 관리
- * v1.1: 모달 패널, 전체 반영, 오렌지 디자인
+ * v1.1: 모달 패널, 부분 반영(서식 보존), 오렌지 디자인
  */
 
 (() => {
@@ -170,11 +170,47 @@
     const quotedContext = EmailExtractor.extractQuotedContext(composeBody);
 
     const panelCallbacks = {
-      onApplyAll: (correctedBody) => {
-        TextReplacer.replaceEntireBody(composeBody, correctedBody);
-      },
       onApplySelected: (selectedIssues) => {
-        TextReplacer.applyAllCorrections(composeBody, selectedIssues);
+        const snapshot = _createBodySnapshot(composeBody);
+        const { applied, failed } = TextReplacer.applyAllCorrections(composeBody, selectedIssues);
+
+        // 서명/인용 블록이 변경됐다면 전체 롤백 (방어적 안전장치)
+        const violated = _verifyProtectedBlocks(composeBody, snapshot);
+        if (violated) {
+          _restoreBodySnapshot(composeBody, snapshot);
+          _showApplyResultToast(0, selectedIssues.length, null, null, {
+            reason: 'protected_violation',
+          });
+          return;
+        }
+
+        _showApplyResultToast(applied, failed, composeBody, snapshot);
+      },
+      onApplySingle: (issue) => {
+        const snapshot = _createBodySnapshot(composeBody);
+        const ok = TextReplacer.applyCorrection(composeBody, issue.original, issue.corrected);
+
+        const violated = _verifyProtectedBlocks(composeBody, snapshot);
+        if (violated) {
+          _restoreBodySnapshot(composeBody, snapshot);
+          _showApplyResultToast(0, 1, null, null, { reason: 'protected_violation' });
+          return false;
+        }
+
+        if (ok) {
+          _showApplyResultToast(1, 0, composeBody, snapshot);
+          if (_isContextValid()) {
+            try {
+              chrome.runtime.sendMessage({
+                type: 'logUsageEvent',
+                event: { event_type: 'issue_applied', category: issue.category },
+              });
+            } catch {}
+          }
+        } else {
+          _showApplyResultToast(0, 1);
+        }
+        return ok;
       },
       onRetry: () => startReview(composeContainer),
     };
@@ -259,6 +295,162 @@
       message.quotedContext = quotedContext;
     }
     port.postMessage(message);
+  }
+
+  // --- 본문 스냅샷 (Undo + 자동 롤백용) ---
+
+  const PROTECTED_SELECTORS = [
+    'div[data-smartmail="gmail_signature"]',
+    'div.gmail_signature',
+    'div.gmail_signature_prefix',
+    '.gmail_quote',
+    'blockquote[class*="gmail"]',
+    'div.gmail_quote',
+  ];
+
+  function _createBodySnapshot(composeBody) {
+    if (!composeBody) return null;
+    const protectedBlocks = [];
+    for (const sel of PROTECTED_SELECTORS) {
+      composeBody.querySelectorAll(sel).forEach(el => {
+        protectedBlocks.push(el.outerHTML);
+      });
+    }
+    return {
+      innerHTML: composeBody.innerHTML,
+      protectedBlocks: protectedBlocks.join('\n'),
+      timestamp: Date.now(),
+    };
+  }
+
+  function _restoreBodySnapshot(composeBody, snapshot) {
+    if (!composeBody || !snapshot) return;
+    try {
+      composeBody.innerHTML = snapshot.innerHTML;
+      composeBody.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch (e) { /* noop */ }
+  }
+
+  function _verifyProtectedBlocks(composeBody, snapshot) {
+    if (!composeBody || !snapshot) return false;
+    const current = [];
+    for (const sel of PROTECTED_SELECTORS) {
+      composeBody.querySelectorAll(sel).forEach(el => {
+        current.push(el.outerHTML);
+      });
+    }
+    return current.join('\n') !== snapshot.protectedBlocks;
+  }
+
+  function _showApplyResultToast(applied, failed, composeBody, snapshot, opts = {}) {
+    const existing = document.getElementById('beforesend-apply-toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.id = 'beforesend-apply-toast';
+
+    let message;
+    let showUndo = false;
+    if (opts.reason === 'protected_violation') {
+      message = '서명·인용부가 영향을 받을 뻔해서 자동으로 되돌렸습니다.';
+    } else if (failed > 0) {
+      message = applied > 0
+        ? `수정 ${applied}건 반영. ${failed}건은 본문에서 찾지 못했습니다.`
+        : `적용 실패 (${failed}건). 원문과 제안이 일치하지 않을 수 있습니다.`;
+      showUndo = applied > 0;
+    } else {
+      message = `수정 ${applied}건을 반영했습니다.`;
+      showUndo = applied > 0;
+    }
+
+    Object.assign(toast.style, {
+      position: 'fixed',
+      bottom: '24px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      background: '#202124',
+      color: '#fff',
+      padding: '10px 16px 10px 20px',
+      borderRadius: '12px',
+      fontSize: '14px',
+      fontFamily: 'Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
+      zIndex: '999999',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+      maxWidth: 'min(480px, calc(100vw - 32px))',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '12px',
+    });
+
+    const text = document.createElement('span');
+    text.textContent = message;
+    text.style.flex = '1';
+    text.style.lineHeight = '1.4';
+    toast.appendChild(text);
+
+    if (showUndo && composeBody && snapshot) {
+      const undoBtn = document.createElement('button');
+      Object.assign(undoBtn.style, {
+        background: 'transparent',
+        color: '#FFB088',
+        border: '1px solid #FFB088',
+        borderRadius: '8px',
+        padding: '6px 12px',
+        fontSize: '13px',
+        fontWeight: '600',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+        fontFamily: 'inherit',
+        transition: 'background-color 100ms, color 100ms',
+      });
+      undoBtn.textContent = '되돌리기';
+      undoBtn.addEventListener('mouseenter', () => {
+        undoBtn.style.background = '#FFB088';
+        undoBtn.style.color = '#202124';
+      });
+      undoBtn.addEventListener('mouseleave', () => {
+        undoBtn.style.background = 'transparent';
+        undoBtn.style.color = '#FFB088';
+      });
+      undoBtn.addEventListener('click', () => {
+        _restoreBodySnapshot(composeBody, snapshot);
+        toast.remove();
+        _showUndoneToast();
+      });
+      toast.appendChild(undoBtn);
+    }
+
+    document.body.appendChild(toast);
+    // 되돌리기 가능 토스트는 좀 더 오래 표시
+    const lifetime = showUndo ? 7000 : 4500;
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, lifetime);
+  }
+
+  function _showUndoneToast() {
+    const existing = document.getElementById('beforesend-apply-toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.id = 'beforesend-apply-toast';
+    Object.assign(toast.style, {
+      position: 'fixed',
+      bottom: '24px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      background: '#202124',
+      color: '#fff',
+      padding: '12px 24px',
+      borderRadius: '12px',
+      fontSize: '14px',
+      fontFamily: 'Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif',
+      zIndex: '999999',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+      maxWidth: 'min(420px, calc(100vw - 32px))',
+      textAlign: 'center',
+    });
+    toast.textContent = '수정을 되돌렸습니다.';
+    document.body.appendChild(toast);
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 2500);
   }
 
   function _showRefreshNotice() {
